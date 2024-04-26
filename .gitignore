@@ -1,2 +1,4 @@
 main.go.example
 .env
+.vscode/
+tests/

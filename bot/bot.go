@@ -1,19 +1,19 @@
 package bot
 
 import (
-	"github.com/bwmarrin/discordgo"
 	"log"
+
+	"github.com/bwmarrin/discordgo"
 )
 
-
 type Bot struct {
-	s *discordgo.Session
+	s       *discordgo.Session
 	guildID string
 }
 
 type Boot struct {
 	GuildID string
-	Token string
+	Token   string
 }
 
 func New(boot Boot) (*Bot, error) {

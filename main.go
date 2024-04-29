@@ -6,32 +6,40 @@ import (
 	"os/signal"
 
 	"github.com/erik-petrov/dj_sanya_go/bot"
+	"github.com/joho/godotenv"
 )
 
 // bot params
 var (
-	GuildID  = "1009396276661583912" //472357061267816468
-	BotToken = os.Getenv("DISCORD_CRASH_TOKEN")
+	GuildID = "1009396276661583912" //472357061267816468
 )
 
 func main() {
+	godotenv.Load()
+
+	token := os.Getenv("BOT_TOKEN")
+
+	if token == "" {
+		log.Fatal("no token")
+	}
+
 	boot := bot.Boot{
 		GuildID: GuildID,
-		Token: BotToken,
+		Token:   os.Getenv("BOT_TOKEN"),
 	}
 
 	bot, err := bot.New(boot)
-	if err != nil{
+	if err != nil {
 		log.Fatal(err)
 	}
 
 	log.Println("Adding commands...")
 
 	err = bot.Start()
-	if err != nil{
+	if err != nil {
 		log.Fatal(err)
 	}
-	
+
 	defer bot.Close()
 
 	stop := make(chan os.Signal, 1)

@@ -9,16 +9,18 @@ import (
 type Bot struct {
 	s       *discordgo.Session
 	guildID string
+	ytToken string
 }
 
 type Boot struct {
-	GuildID string
-	Token   string
+	GuildID  string
+	Token    string
+	YT_Token string
 }
 
 func New(boot Boot) (*Bot, error) {
 	s, err := discordgo.New("Bot " + boot.Token)
-	return &Bot{s: s, guildID: boot.GuildID}, err
+	return &Bot{s: s, guildID: boot.GuildID, ytToken: boot.YT_Token}, err
 }
 
 func (b *Bot) Start() error {

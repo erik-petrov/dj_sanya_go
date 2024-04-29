@@ -71,7 +71,7 @@ func (b *Bot) startPlaying(s *discordgo.Session, song Song, guildID string, chan
 	go func() {
 		for {
 			err := <-done
-			if !errors.Is(err, stream.ErrStreamIsDone) {
+			if !errors.Is(err, stream.ErrStreamIsDone) || !(errors.Is(err, io.EOF) && repeat) {
 				log.Println(err.Error())
 				return
 			}

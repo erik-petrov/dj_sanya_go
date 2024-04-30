@@ -6,6 +6,7 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"net/url"
 	"strings"
 
 	"github.com/bwmarrin/discordgo"
@@ -28,7 +29,7 @@ func (b *Bot) onPlay(s *discordgo.Session, i *discordgo.InteractionCreate) {
 	})
 	link := i.ApplicationCommandData().Options[0].StringValue()
 	if !checkSubstrings(link, "youtu.be", "youtube") {
-		searchURL := "https://www.googleapis.com/youtube/v3/search?part=snippet&maxResults=1&q=" + link + "&type=video&key=" + b.ytToken
+		searchURL := "https://www.googleapis.com/youtube/v3/search?part=snippet&maxResults=1&q=" + url.QueryEscape(link) + "&type=video&key=" + b.ytToken
 		res, err := http.DefaultClient.Get(searchURL)
 		if err != nil {
 			fmt.Printf("couldnt make the search request: %s\n", err)
@@ -42,7 +43,7 @@ func (b *Bot) onPlay(s *discordgo.Session, i *discordgo.InteractionCreate) {
 		var response YTResponse
 		err = json.Unmarshal([]byte(resBody), &response)
 		if err != nil {
-			fmt.Printf("could not parse response: %s\n", err)
+			fmt.Printf("could not parse response: %s.\n body: %s\n request: %s\n", err, resBody, searchURL)
 			return
 		}
 		link = "https://youtube.com/watch?v=" + response.Results[0].ID.VideoID

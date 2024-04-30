@@ -8,5 +8,5 @@ RUN apt-get -y install python3-pip
 RUN apt-get install -y ffmpeg
 RUN apt-get install -y yt-dlp
 COPY . .
-RUN go mod tidy
+RUN go mod download
 CMD ["go", "run", "main.go"]

@@ -10,11 +10,16 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
+      - name: Set up variables
+        id: vars
+        run: echo ::set-output name=tag::$(date +%s)
+            
       - name: Build the Docker image
         run: | 
           echo ${{secrets.PAT}} | sudo docker login -u koteman123 --password-stdin
-          sudo docker build . --file Dockerfile --tag dj_sanya_go:$(date +%s)
-          sudo docker push dj_sanya_go:$(date +%s)
+          sudo docker build . --file Dockerfile --tag dj_sanya_go:${{ steps.vars.outputs.tag }}
+          sudo docker push dj_sanya_go:${{ steps.vars.outputs.tag }}
+          
       - name: Deploy
         uses: appleboy/ssh-action@master
         with: 

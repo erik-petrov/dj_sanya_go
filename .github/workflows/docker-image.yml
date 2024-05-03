@@ -28,9 +28,7 @@ jobs:
           username: ${{ secrets.SSH_USERNAME }}
           key: ${{ secrets.SSH_KEY }}
           script_stop: true
-          script: |
-            cd /dj_sanya_go
-            ./start.sh
+          script: sudo docker run koteman123/dj_sanya_go:
       
     
         

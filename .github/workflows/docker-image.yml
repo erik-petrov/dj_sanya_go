@@ -3,16 +3,29 @@ name: Docker Image CI
 on:
   push:
     branches: [ "main" ]
-  pull_request:
-    branches: [ "main" ]
 
 jobs:
-
   build:
-
     runs-on: ubuntu-latest
 
     steps:
-    - uses: actions/checkout@v4
-    - name: Build the Docker image
-      run: docker build . --file Dockerfile --tag dj_sanya:$(date +%s)
+      - uses: actions/checkout@v4
+      - name: Build the Docker image
+        run: | 
+          echo ${{secrets.PAT}} | sudo docker login -u koteman123 --password-stdin
+          sudo docker build . --file Dockerfile --tag dj_sanya:$(date +%s)
+          sudo docker push dj_sanya:$(date +%s)
+      - name: Deploy
+        uses: appleboy/ssh-action@master
+        with: 
+          host: ${{ secrets.SSH_HOST }}
+          port: ${{ secrets.SSH_PORT }}
+          username: ${{ secrets.SSH_USERNAME }}
+          key: ${{ secrets.SSH_KEY }}
+          script_stop: true
+          script: |
+            cd /dj_sanya_go
+            ./start.sh
+      
+    
+        

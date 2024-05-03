@@ -18,8 +18,7 @@ jobs:
         run: | 
           echo ${{secrets.PAT}} | sudo docker login -u koteman123 --password-stdin
           sudo docker buildx create --use
-          sudo docker buildx build --platform linux/amd64,linux/arm64 -t ${{ steps.vars.outputs.img }} .
-          sudo docker push ${{ steps.vars.outputs.img }}
+          sudo docker buildx build --push --platform linux/amd64,linux/arm64 -t ${{ steps.vars.outputs.img }} .
           
       - name: Deploy
         uses: appleboy/ssh-action@master
@@ -29,7 +28,7 @@ jobs:
           username: ${{ secrets.SSH_USERNAME }}
           key: ${{ secrets.SSH_KEY }}
           script_stop: true
-          script: sudo docker run ${{ steps.vars.outputs.img }}
+          script: sudo docker run --platform linux/arm64 ${{ steps.vars.outputs.img }}
       
     
         

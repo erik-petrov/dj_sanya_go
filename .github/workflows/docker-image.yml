@@ -17,8 +17,8 @@ jobs:
       - name: Build the Docker image
         run: | 
           echo ${{secrets.PAT}} | sudo docker login -u koteman123 --password-stdin
-          sudo docker build . --file Dockerfile --tag dj_sanya_go:${{ steps.vars.outputs.tag }}
-          sudo docker push dj_sanya_go:${{ steps.vars.outputs.tag }}
+          sudo docker build -t koteman123/dj_sanya_go:${{ steps.vars.outputs.tag }} .
+          sudo docker push koteman123/dj_sanya_go:${{ steps.vars.outputs.tag }}
           
       - name: Deploy
         uses: appleboy/ssh-action@master

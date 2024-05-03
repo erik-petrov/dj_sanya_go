@@ -17,16 +17,26 @@ type YTResponse struct {
 		ID struct {
 			VideoID string `json:"videoId"`
 		} `json:"id"`
+		Snippet struct {
+			Title string `jsin:"title"`
+		}
 	} `json:"items"`
 }
 
 func (b *Bot) onPlay(s *discordgo.Session, i *discordgo.InteractionCreate) {
+	if b.IsPlaying() {
+		editInteraction(s, i, "Already playing!")
+		return
+	}
+
 	s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
 		Type: discordgo.InteractionResponseChannelMessageWithSource,
 		Data: &discordgo.InteractionResponseData{
-			Content: "Loading..",
+			Content: "`Loading..",
 		},
 	})
+
+	title := ""
 	link := i.ApplicationCommandData().Options[0].StringValue()
 	if !checkSubstrings(link, "youtu.be", "youtube") {
 		searchURL := "https://www.googleapis.com/youtube/v3/search?part=snippet&maxResults=1&q=" + url.QueryEscape(link) + "&type=video&key=" + b.ytToken
@@ -46,11 +56,27 @@ func (b *Bot) onPlay(s *discordgo.Session, i *discordgo.InteractionCreate) {
 			fmt.Printf("could not parse response: %s.\n body: %s\n request: %s\n", err, resBody, searchURL)
 			return
 		}
+		if len(response.Results) == 0 {
+			content := "Song not found"
+			s.InteractionResponseEdit(i.Interaction, &discordgo.WebhookEdit{
+				Content: &content,
+			})
+			return
+		}
 		link = "https://youtube.com/watch?v=" + response.Results[0].ID.VideoID
+		title = response.Results[0].Snippet.Title
 	}
-	song := b.playSong(link)
-	content := "Играю: `" + song.Title + "` \nС длительностью в " + fmt.Sprint(song.Duration) + " секунд"
-	_, err := s.InteractionResponseEdit(i.Interaction, &discordgo.WebhookEdit{
+	song, err := b.playSong(link)
+
+	if err != nil {
+		s.FollowupMessageCreate(i.Interaction, true, &discordgo.WebhookParams{
+			Content: "Something went wrong: " + err.Error(),
+		})
+		return
+	}
+
+	content := "Играю: `" + title + "`"
+	_, err = s.InteractionResponseEdit(i.Interaction, &discordgo.WebhookEdit{
 		Content: &content,
 	})
 	if err != nil {
@@ -69,7 +95,7 @@ func (b *Bot) onPlay(s *discordgo.Session, i *discordgo.InteractionCreate) {
 
 	for _, vs := range g.VoiceStates {
 		if vs.UserID == i.Member.User.ID {
-			err := b.startPlaying(s, song, g.ID, vs.ChannelID)
+			err := b.startPlaying(s, song.RequestedDownloads[0].RequestedFormats[1].URL, g.ID, vs.ChannelID)
 			if err != nil {
 				log.Println("Error playing sound:", err)
 			}
@@ -139,4 +165,10 @@ func checkSubstrings(str string, subs ...string) bool {
 		}
 	}
 	return false
+}
+
+func editInteraction(s *discordgo.Session, i *discordgo.InteractionCreate, msg string) {
+	s.InteractionResponseEdit(i.Interaction, &discordgo.WebhookEdit{
+		Content: &msg,
+	})
 }

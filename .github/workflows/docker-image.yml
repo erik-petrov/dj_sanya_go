@@ -28,7 +28,7 @@ jobs:
           username: ${{ secrets.SSH_USERNAME }}
           key: ${{ secrets.SSH_KEY }}
           script_stop: true
-          script: sudo docker run --platform linux/arm64 ${{ steps.vars.outputs.img }}
+          script: sudo docker run --platform linux/arm64  --env YT_TOKEN=${{ secrets.YT_TOKEN }} --env BOT_TOKEN=${{ secrets.BOT_TOKEN }} ${{ steps.vars.outputs.img }}
       
     
         

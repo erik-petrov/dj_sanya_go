@@ -16,6 +16,7 @@ jobs:
             
       - name: Build the Docker image
         run: | 
+          sudo docker builder prune -a
           echo ${{secrets.PAT}} | sudo docker login -u koteman123 --password-stdin
           sudo docker build --platform linux/arm64 -t ${{ steps.vars.outputs.img }} .
           sudo docker push ${{ steps.vars.outputs.img }}

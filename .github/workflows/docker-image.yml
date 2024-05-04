@@ -28,7 +28,4 @@ jobs:
           username: ${{ secrets.SSH_USERNAME }}
           key: ${{ secrets.SSH_KEY }}
           script_stop: true
-          script: ./start_sanya.sh
-      
-    
-        
+          script: ./start_sanya.sh ${{ steps.vars.outputs.img }}

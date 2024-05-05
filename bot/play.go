@@ -32,41 +32,42 @@ func (b *Bot) onPlay(s *discordgo.Session, i *discordgo.InteractionCreate) {
 	s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
 		Type: discordgo.InteractionResponseChannelMessageWithSource,
 		Data: &discordgo.InteractionResponseData{
-			Content: "`Loading..",
+			Content: "Loading..",
 		},
 	})
 
 	title := ""
-	link := i.ApplicationCommandData().Options[0].StringValue()
-	if !checkSubstrings(link, "youtu.be", "youtube") {
-		searchURL := "https://www.googleapis.com/youtube/v3/search?part=snippet&maxResults=1&q=" + url.QueryEscape(link) + "&type=video&key=" + b.ytToken
-		res, err := http.DefaultClient.Get(searchURL)
-		if err != nil {
-			fmt.Printf("couldnt make the search request: %s\n", err)
-			return
-		}
-		resBody, err := io.ReadAll(res.Body)
-		if err != nil {
-			fmt.Printf("could not read response body: %s\n", err)
-			return
-		}
-		var response YTResponse
-		err = json.Unmarshal([]byte(resBody), &response)
-		if err != nil {
-			fmt.Printf("could not parse response: %s.\n body: %s\n request: %s\n", err, resBody, searchURL)
-			return
-		}
-		if len(response.Results) == 0 {
-			content := "Song not found"
-			s.InteractionResponseEdit(i.Interaction, &discordgo.WebhookEdit{
-				Content: &content,
-			})
-			return
-		}
-		link = "https://youtube.com/watch?v=" + response.Results[0].ID.VideoID
-		title = response.Results[0].Snippet.Title
+	link := ""
+	attachment := false
+	if len(i.ApplicationCommandData().Options) == 0 {
+		s.FollowupMessageCreate(i.Interaction, true, &discordgo.WebhookParams{
+			Content: "No music data given",
+		})
+		return
 	}
-	song, err := b.playSong(link)
+	switch i.ApplicationCommandData().Options[0].Type {
+	case 3: //string
+		link = i.ApplicationCommandData().Options[0].StringValue()
+		if !checkSubstrings(link, "youtu.be", "youtube") {
+			songlink, videoname, err := getLinkTitle(link, b.ytToken, s, i)
+			if err != nil {
+				s.FollowupMessageCreate(i.Interaction, true, &discordgo.WebhookParams{
+					Content: "Something went wrong: " + err.Error(),
+				})
+				return
+			}
+			link = songlink
+			title = videoname
+		}
+	case 11: //attachment
+		attachmentID := i.ApplicationCommandData().Options[0].Value.(string)
+		file := i.ApplicationCommandData().Resolved.Attachments[attachmentID]
+		link = file.URL
+		title = file.Filename
+		attachment = true
+	}
+
+	song, err := b.playSong(link, attachment)
 
 	if err != nil {
 		s.FollowupMessageCreate(i.Interaction, true, &discordgo.WebhookParams{
@@ -75,7 +76,13 @@ func (b *Bot) onPlay(s *discordgo.Session, i *discordgo.InteractionCreate) {
 		return
 	}
 
-	content := "Играю: `" + title + "`"
+	content := ""
+	if !attachment {
+		content = "Играю: `" + title + "`\nДлительностью " + song.Duration
+	} else {
+		content = "Играю: `" + title + "`"
+	}
+
 	_, err = s.InteractionResponseEdit(i.Interaction, &discordgo.WebhookEdit{
 		Content: &content,
 	})
@@ -171,4 +178,34 @@ func editInteraction(s *discordgo.Session, i *discordgo.InteractionCreate, msg s
 	s.InteractionResponseEdit(i.Interaction, &discordgo.WebhookEdit{
 		Content: &msg,
 	})
+}
+
+func getLinkTitle(link string, token string, s *discordgo.Session, i *discordgo.InteractionCreate) (ytlink string, title string, err error) {
+	searchURL := "https://www.googleapis.com/youtube/v3/search?part=snippet&maxResults=1&q=" + url.QueryEscape(link) + "&type=video&key=" + token
+	res, err := http.DefaultClient.Get(searchURL)
+	if err != nil {
+		fmt.Printf("couldnt make the search request: %s\n", err)
+		return "", "", err
+	}
+	resBody, err := io.ReadAll(res.Body)
+	if err != nil {
+		fmt.Printf("could not read response body: %s\n", err)
+		return "", "", err
+	}
+	var response YTResponse
+	err = json.Unmarshal([]byte(resBody), &response)
+	if err != nil {
+		fmt.Printf("could not parse response: %s.\n body: %s\n request: %s\n", err, resBody, searchURL)
+		return "", "", err
+	}
+	if len(response.Results) == 0 {
+		content := "Song not found"
+		s.InteractionResponseEdit(i.Interaction, &discordgo.WebhookEdit{
+			Content: &content,
+		})
+		return "", "", err
+	}
+	ytlink = "https://youtube.com/watch?v=" + response.Results[0].ID.VideoID
+	title = response.Results[0].Snippet.Title
+	return ytlink, title, nil
 }

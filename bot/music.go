@@ -20,14 +20,18 @@ var (
 )
 
 type yt_dlpResponse struct {
-	Title              string `json:"title"`
-	WebpageURL         string `json:"website_url"`
-	Duration           string `json:"duration_string"`
-	RequestedDownloads []struct {
-		RequestedFormats []struct {
-			URL string `json:"url"`
-		} `json:"requested_formats"`
-	} `json:"requested_downloads"`
+	Title              string               `json:"title"`
+	WebpageURL         string               `json:"website_url"`
+	Duration           string               `json:"duration_string"`
+	RequestedDownloads []RequestedDownloads `json:"requested_downloads"`
+}
+
+type RequestedDownloads struct {
+	RequestedFormats []RequestedFormats `json:"requested_formats"`
+}
+
+type RequestedFormats struct {
+	URL string `json:"url"`
 }
 
 var repeat bool = false
@@ -101,7 +105,13 @@ func (b *Bot) startPlaying(s *discordgo.Session, song string, guildID string, ch
 	return err
 }
 
-func (b *Bot) playSong(link string) (yt_dlpResponse, error) {
+func (b *Bot) playSong(link string, attachment bool) (yt_dlpResponse, error) {
+	if attachment {
+		return yt_dlpResponse{
+			WebpageURL:         link,
+			RequestedDownloads: []RequestedDownloads{{[]RequestedFormats{{}, {URL: link}}}}, //since 1st is usually the video
+		}, nil
+	}
 	resp, err := b.getMetadata(link)
 	if err != nil {
 		return yt_dlpResponse{}, err
@@ -175,6 +185,7 @@ func (b *Bot) togglePause() (bool, error) {
 
 func (b *Bot) stop() {
 	MusicStream.SetFinished()
+	Playing = false
 }
 
 func (b *Bot) toggleRepeat() (bool, error) {

@@ -54,9 +54,15 @@ func (b *Bot) setupCommands() {
 
 				{
 					Type:        discordgo.ApplicationCommandOptionString,
-					Name:        "music-link",
-					Description: "yt link to the music",
-					Required:    true,
+					Name:        "query",
+					Description: "music name/yt link",
+					Required:    false,
+				},
+				{
+					Type:        discordgo.ApplicationCommandOptionAttachment,
+					Name:        "file",
+					Description: "music file",
+					Required:    false,
 				},
 			},
 		},

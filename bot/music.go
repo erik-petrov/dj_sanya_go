@@ -24,6 +24,7 @@ type yt_dlpResponse struct {
 	WebpageURL         string               `json:"website_url"`
 	Duration           string               `json:"duration_string"`
 	RequestedDownloads []RequestedDownloads `json:"requested_downloads"`
+	FallbackURL        string               `json:"url"`
 }
 
 type RequestedDownloads struct {

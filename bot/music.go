@@ -17,6 +17,7 @@ var (
 	MusicStream  = new(stream.StreamingSession)
 	ErrBotStandy = errors.New("Bot is on standy")
 	Playing      = false
+	Queue        = make([]yt_dlpResponse, 0)
 )
 
 type yt_dlpResponse struct {
@@ -83,14 +84,30 @@ func (b *Bot) startPlaying(s *discordgo.Session, song string, guildID string, ch
 	go func() {
 		for {
 			err := <-done
-			if !errors.Is(err, stream.ErrStreamIsDone) && !(errors.Is(err, io.EOF) && repeat) {
-				log.Println(err.Error())
+			if errors.Is(err, stream.ErrStopped) {
 				return
+			}
+			if len(Queue) >= 1 && !repeat && (errors.Is(err, io.EOF) || errors.Is(err, stream.ErrStreamIsDone)) {
+				toPlay := Queue[0]
+				Queue = Queue[1:]
+				linkToPlay := ""
+				if toPlay.FallbackURL != "" {
+					linkToPlay = toPlay.FallbackURL
+				} else {
+					linkToPlay = toPlay.RequestedDownloads[0].RequestedFormats[1].URL
+				}
+				b.startPlaying(s, linkToPlay, guildID, channelID)
 			}
 			if repeat {
 				b.startPlaying(s, song, guildID, channelID)
 			}
-
+			if !Playing {
+				return
+			}
+			if !errors.Is(err, stream.ErrStreamIsDone) && !(errors.Is(err, io.EOF) && repeat) {
+				log.Println(err.Error())
+				return
+			}
 		}
 
 	}()
@@ -100,7 +117,7 @@ func (b *Bot) startPlaying(s *discordgo.Session, song string, guildID string, ch
 		return err
 	}
 
-	if err == io.EOF {
+	if err == io.EOF || err == stream.ErrSkipped || err == stream.ErrStopped {
 		return nil
 	}
 	return err
@@ -122,6 +139,11 @@ func (b *Bot) playSong(link string, attachment bool) (yt_dlpResponse, error) {
 
 func (b *Bot) IsPlaying() bool {
 	return Playing
+}
+
+func (b *Bot) AddToQueue(song yt_dlpResponse) {
+	Queue = append(Queue, song)
+	log.Println(len(Queue))
 }
 
 func (b *Bot) getMetadata(ytlink string) (link yt_dlpResponse, err error) {
@@ -187,6 +209,10 @@ func (b *Bot) togglePause() (bool, error) {
 func (b *Bot) stop() {
 	MusicStream.SetFinished()
 	Playing = false
+}
+
+func (b *Bot) skip() {
+	MusicStream.SetSkipped()
 }
 
 func (b *Bot) toggleRepeat() (bool, error) {

@@ -16,6 +16,7 @@ var (
 	ErrStopped         = errors.New("stopped by user")
 	ErrAlreadyRunning  = errors.New("a stream is already running")
 	ErrStreamIsDone    = errors.New("stream is done")
+	ErrSkipped         = errors.New("skipped by user")
 )
 
 // StreamingSession provides an easy way to directly transmit opus audio
@@ -30,6 +31,7 @@ type StreamingSession struct {
 	vc     *discordgo.VoiceConnection
 
 	repeat     bool
+	skipped    bool
 	end        bool //lol, i hate this but let it be
 	paused     bool
 	framesSent int
@@ -78,11 +80,18 @@ func (s *StreamingSession) stream() error {
 			return ErrPaused
 		}
 
+		if s.skipped {
+			s.skipped = false
+			s.running = false
+			s.repeat = false
+			s.done <- ErrSkipped
+		}
+
 		if s.end {
 			s.end = false
 			s.running = false
 			s.repeat = false
-			return ErrStopped
+			s.done <- ErrStopped
 		}
 
 		s.Unlock()
@@ -202,6 +211,19 @@ func (s *StreamingSession) Finished() (bool, error) {
 	s.Unlock()
 
 	return fin, err
+}
+
+func (s *StreamingSession) SetSkipped() {
+	s.Lock()
+
+	if s.finished {
+		s.Unlock()
+		return
+	}
+
+	s.skipped = true
+
+	s.Unlock()
 }
 
 // Stop current stream from playing more music

@@ -45,7 +45,7 @@ func (b *Bot) setupCommands() {
 		},
 		{
 			Name:        "stop",
-			Description: "Stops the currently playing soundtrack.",
+			Description: "Stops the bot from playing.",
 		},
 		{
 			Name:        "play",
@@ -66,6 +66,10 @@ func (b *Bot) setupCommands() {
 				},
 			},
 		},
+		{
+			Name:        "skip",
+			Description: "Skips the currently playing song for a next one",
+		},
 	}
 
 	commandHandlers := map[string]func(s *discordgo.Session, i *discordgo.InteractionCreate){
@@ -76,6 +80,8 @@ func (b *Bot) setupCommands() {
 		"pause": b.onPause,
 
 		"play": b.onPlay,
+
+		"skip": b.onSkip,
 	}
 
 	b.s.AddHandler(func(s *discordgo.Session, i *discordgo.InteractionCreate) {

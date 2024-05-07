@@ -24,11 +24,6 @@ type YTResponse struct {
 }
 
 func (b *Bot) onPlay(s *discordgo.Session, i *discordgo.InteractionCreate) {
-	if b.IsPlaying() {
-		editInteraction(s, i, "Already playing!")
-		return
-	}
-
 	s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
 		Type: discordgo.InteractionResponseChannelMessageWithSource,
 		Data: &discordgo.InteractionResponseData{
@@ -68,6 +63,10 @@ func (b *Bot) onPlay(s *discordgo.Session, i *discordgo.InteractionCreate) {
 
 	song, err := b.playSong(link, attachment)
 
+	if attachment {
+		song.Title = title
+	}
+
 	if err != nil {
 		s.FollowupMessageCreate(i.Interaction, true, &discordgo.WebhookParams{
 			Content: "Something went wrong: " + err.Error(),
@@ -75,11 +74,17 @@ func (b *Bot) onPlay(s *discordgo.Session, i *discordgo.InteractionCreate) {
 		return
 	}
 
+	if b.IsPlaying() {
+		b.AddToQueue(song)
+		editInteraction(s, i, "Added `"+song.Title+"` to queue!")
+		return
+	}
+
 	content := ""
 	if !attachment {
 		content = "Играю: `" + song.Title + "`\nДлительностью " + song.Duration
 	} else {
-		content = "Играю: `" + title + "`"
+		content = "Играю: `" + song.Title + "`"
 	}
 
 	_, err = s.InteractionResponseEdit(i.Interaction, &discordgo.WebhookEdit{
@@ -168,6 +173,16 @@ func (b *Bot) onRepeat(s *discordgo.Session, i *discordgo.InteractionCreate) {
 		Type: discordgo.InteractionResponseChannelMessageWithSource,
 		Data: &discordgo.InteractionResponseData{
 			Content: content,
+		},
+	})
+}
+
+func (b *Bot) onSkip(s *discordgo.Session, i *discordgo.InteractionCreate) {
+	b.skip()
+	s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
+		Type: discordgo.InteractionResponseChannelMessageWithSource,
+		Data: &discordgo.InteractionResponseData{
+			Content: "Skipped!",
 		},
 	})
 }

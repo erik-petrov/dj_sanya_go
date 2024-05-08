@@ -208,11 +208,13 @@ func (b *Bot) togglePause() (bool, error) {
 
 func (b *Bot) stop() {
 	MusicStream.SetFinished()
+	repeat = false
 	Playing = false
 }
 
 func (b *Bot) skip() {
 	MusicStream.SetSkipped()
+	repeat = false
 }
 
 func (b *Bot) toggleRepeat() (bool, error) {

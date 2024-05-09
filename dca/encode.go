@@ -205,7 +205,7 @@ func (e *EncodeSession) run() {
 		"-reconnect", "1",
 		"-reconnect_at_eof", "1",
 		"-reconnect_streamed", "1",
-		"-reconnect_delay_max", "5",
+		"-reconnect_delay_max", "2",
 		"-i", inFile,
 		"-map", "0:a",
 		"-acodec", "libopus",

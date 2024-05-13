@@ -40,7 +40,7 @@ var repeat bool = false
 
 func encodeFile(song string) (ses *dca.EncodeSession, err error) {
 	options := dca.StdEncodeOptions
-	options.RawOutput = true
+	options.RawOutput = false
 	options.Bitrate = 96
 	options.Application = "lowdelay"
 
@@ -95,6 +95,11 @@ func (b *Bot) startPlaying(s *discordgo.Session, song string, guildID string, ch
 					linkToPlay = toPlay.FallbackURL
 				} else {
 					linkToPlay = toPlay.RequestedDownloads[0].RequestedFormats[1].URL
+				}
+				linkToPlay, err := b.downloadVideo(linkToPlay)
+				if err != nil {
+					log.Println(err.Error())
+					return
 				}
 				b.startPlaying(s, linkToPlay, guildID, channelID)
 			}
@@ -199,6 +204,43 @@ func (b *Bot) getMetadata(ytlink string) (link yt_dlpResponse, err error) {
 	}
 
 	return link, nil
+}
+
+func (b *Bot) downloadVideo(link string) (string, error) {
+	filePath := "temp.ogg"
+	path, err := exec.LookPath("ffmpeg")
+	if errors.Is(err, exec.ErrDot) {
+		err = nil
+	}
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	if path == "" {
+		log.Fatal("ffmpeg not installed")
+		return "", errors.New("ffmpeg missing")
+	}
+
+	args := []string{
+		"-i", link,
+		"-map", "0:a",
+		"-acodec", "libopus",
+		"-f", "ogg",
+		"-y",
+		filePath,
+	}
+
+	ffmpeg := exec.Command("ffmpeg", args...)
+
+	if err := ffmpeg.Start(); err != nil {
+		return "", err
+	}
+	if err := ffmpeg.Wait(); err != nil {
+		log.Println(ffmpeg.Stderr)
+		return "", err
+	}
+
+	return filePath, nil
 }
 
 func (b *Bot) togglePause() (bool, error) {

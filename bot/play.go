@@ -114,7 +114,13 @@ func (b *Bot) onPlay(s *discordgo.Session, i *discordgo.InteractionCreate) {
 				rawURL = song.RequestedDownloads[0].RequestedFormats[1].URL
 			}
 
-			err := b.startPlaying(s, rawURL, g.ID, vs.ChannelID)
+			rawURL, err := b.downloadVideo(rawURL)
+			if err != nil {
+				log.Println("Error downloading sound:", err)
+				return
+			}
+
+			err = b.startPlaying(s, rawURL, g.ID, vs.ChannelID)
 			if err != nil {
 				log.Println("Error playing sound:", err)
 			}

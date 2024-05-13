@@ -9,4 +9,5 @@ RUN apt-get install -y ffmpeg
 RUN apt-get install -y yt-dlp
 COPY . .
 RUN go mod download
+RUN mkdir temp_vids
 CMD ["go", "run", "main.go"]

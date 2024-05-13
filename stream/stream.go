@@ -63,7 +63,6 @@ func (s *StreamingSession) stream() error {
 	// Check if we are already running and if so stop
 	s.Lock()
 	defer s.Unlock()
-	println("starting a stream!")
 
 	if s.running {
 		return ErrAlreadyRunning

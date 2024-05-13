@@ -201,26 +201,26 @@ func (e *EncodeSession) run() {
 
 	// Launch ffmpeg with a variety of different fruits and goodies mixed togheter
 	args := []string{
-		"-stats",
+		/*"-stats",
 		"-reconnect", "1",
 		"-reconnect_at_eof", "1",
 		"-reconnect_streamed", "1",
-		"-reconnect_delay_max", "2",
+		"-reconnect_delay_max", "2",*/
 		"-i", inFile,
 		"-map", "0:a",
 		"-acodec", "libopus",
 		"-f", "ogg",
 		//"-vbr", vbrStr,
-		"-compression_level", strconv.Itoa(e.options.CompressionLevel),
+		//"-compression_level", strconv.Itoa(e.options.CompressionLevel),
 		//"-vol", strconv.Itoa(e.options.Volume),
-		"-ar", strconv.Itoa(e.options.FrameRate),
+		/*"-ar", strconv.Itoa(e.options.FrameRate),
 		"-ac", strconv.Itoa(e.options.Channels),
 		"-b:a", strconv.Itoa(e.options.Bitrate * 1000),
 		"-application", string(e.options.Application),
 		"-frame_duration", strconv.Itoa(e.options.FrameDuration),
 		"-packet_loss", strconv.Itoa(e.options.PacketLoss),
 		"-threads", strconv.Itoa(e.options.Threads),
-		"-ss", strconv.Itoa(e.options.StartTime),
+		"-ss", strconv.Itoa(e.options.StartTime),*/
 	}
 
 	if e.options.AudioFilter != "" {
@@ -282,6 +282,7 @@ func (e *EncodeSession) run() {
 	err = ffmpeg.Wait()
 	if err != nil {
 		if err.Error() != "signal: killed" {
+			logln(err.Error())
 			e.Lock()
 			e.err = err
 			e.Unlock()

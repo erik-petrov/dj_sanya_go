@@ -7,6 +7,7 @@ import (
 	"io"
 	"log"
 	"os/exec"
+	"time"
 
 	"github.com/bwmarrin/discordgo"
 	"github.com/erik-petrov/dj_sanya_go/dca"
@@ -52,12 +53,28 @@ func encodeFile(song string) (ses *dca.EncodeSession, err error) {
 }
 
 func (b *Bot) startPlaying(s *discordgo.Session, song string, guildID string, channelID string) (err error) {
-
 	// Join the provided voice channel.
 	vc, err := s.ChannelVoiceJoin(guildID, channelID, false, true)
 	if err != nil {
 		return err
 	}
+
+	go func() {
+		for {
+			empty := false
+			c, _ := s.GuildChannels(guildID)
+			for _, cha := range c {
+				if cha.MemberCount == 1 {
+					empty = true
+				}
+			}
+
+			if empty {
+				vc.Disconnect()
+			}
+			time.Sleep(1 * time.Minute)
+		}
+	}()
 
 	// Start speaking.
 	vc.Speaking(true)
@@ -83,6 +100,10 @@ func (b *Bot) startPlaying(s *discordgo.Session, song string, guildID string, ch
 
 	go func() {
 		for {
+			if !vc.Ready {
+				return
+			}
+
 			err := <-done
 			if errors.Is(err, stream.ErrStopped) {
 				return

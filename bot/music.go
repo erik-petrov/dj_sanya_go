@@ -82,7 +82,7 @@ func (b *Bot) HandleVoiceStateUpdate(s *discordgo.Session, i *discordgo.VoiceSta
 				chnl, err := s.Channel(CurrentBotChannel)
 
 				if err != nil {
-					log.Fatal("couldnt get the bot channel")
+					log.Print("couldnt get the bot channel")
 					return
 				}
 
@@ -93,7 +93,8 @@ func (b *Bot) HandleVoiceStateUpdate(s *discordgo.Session, i *discordgo.VoiceSta
 				shit, err := s.Channel(CurrentVoiceConnection.ChannelID)
 
 				if err != nil {
-					log.Fatal("wtf")
+					log.Print("wtf")
+					return
 				}
 
 				if Playing && shit.MemberCount > 1 {

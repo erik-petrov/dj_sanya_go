@@ -16,12 +16,12 @@ import (
 )
 
 var (
-	AfkTime                = 5 * time.Minute
-	MusicStream            = new(stream.StreamingSession)
+	AfkTime                = 600
+	MusicStream            *stream.StreamingSession
 	ErrBotStandy           = errors.New("Bot is on standy")
 	Playing                = false
 	Queue                  = make([]yt_dlpResponse, 0)
-	CurrentVoiceConnection = new(discordgo.VoiceConnection)
+	CurrentVoiceConnection *discordgo.VoiceConnection
 	Timers                 sync.Map
 )
 
@@ -70,40 +70,35 @@ func (b *Bot) HandleVoiceStateUpdate(s *discordgo.Session, i *discordgo.VoiceSta
 		return
 	}
 
-	timer := time.NewTimer(AfkTime)
+	timer := 0
 	Timers.Store(CurrentBotChannel, timer)
 
+	shit, err := s.Channel(CurrentVoiceConnection.ChannelID)
+
+	if err != nil {
+		log.Print("wtf")
+		return
+	}
+
 	go func() {
-		for {
-			select {
-			case <-timer.C:
-				CurrentVoiceConnection.Disconnect()
-				timer.Stop()
-				chnl, err := s.Channel(CurrentBotChannel)
-
-				if err != nil {
-					log.Print("couldnt get the bot channel")
-					return
-				}
-
-				s.ChannelMessageSend(chnl.ID, "left cuz afk")
-				Timers.Delete(CurrentBotChannel)
-				return
-			default:
-				shit, err := s.Channel(CurrentVoiceConnection.ChannelID)
-
-				if err != nil {
-					log.Print("wtf")
-					return
-				}
-
-				if Playing && shit.MemberCount > 1 {
-					timer.Reset(AfkTime)
-				}
-
-				time.Sleep(1 * time.Second)
+		for timer > 1 {
+			if Playing && shit.MemberCount > 1 {
+				timer = AfkTime
 			}
+
+			time.Sleep(1 * time.Second)
+			timer -= 1
 		}
+		CurrentVoiceConnection.Disconnect()
+		chnl, err := s.Channel(CurrentBotChannel)
+
+		if err != nil {
+			log.Print("couldnt get the bot channel")
+			return
+		}
+
+		s.ChannelMessageSend(chnl.ID, "left cuz afk")
+		Timers.Delete(CurrentBotChannel)
 	}()
 }
 

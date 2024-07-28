@@ -65,7 +65,8 @@ func (b *Bot) HandleVoiceStateUpdate(s *discordgo.Session, i *discordgo.VoiceSta
 		return
 	}
 
-	if i.BeforeUpdate != nil {
+	//if not in channels
+	if CurrentBotChannel == "" || CurrentVoiceConnection == nil {
 		return
 	}
 
@@ -89,7 +90,13 @@ func (b *Bot) HandleVoiceStateUpdate(s *discordgo.Session, i *discordgo.VoiceSta
 				Timers.Delete(CurrentBotChannel)
 				return
 			default:
-				if Playing {
+				shit, err := s.Channel(CurrentVoiceConnection.ChannelID)
+
+				if err != nil {
+					log.Fatal("wtf")
+				}
+
+				if Playing && shit.MemberCount > 1 {
 					timer.Reset(AfkTime)
 				}
 

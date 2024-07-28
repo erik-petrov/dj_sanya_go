@@ -12,6 +12,10 @@ import (
 	"github.com/bwmarrin/discordgo"
 )
 
+var (
+	CurrentBotChannel string
+)
+
 type YTResponse struct {
 	Results []struct {
 		ID struct {
@@ -24,6 +28,8 @@ type YTResponse struct {
 }
 
 func (b *Bot) onPlay(s *discordgo.Session, i *discordgo.InteractionCreate) {
+	CurrentBotChannel = i.ChannelID
+
 	s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
 		Type: discordgo.InteractionResponseChannelMessageWithSource,
 		Data: &discordgo.InteractionResponseData{

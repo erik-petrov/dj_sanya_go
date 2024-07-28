@@ -7,6 +7,7 @@ import (
 	"io"
 	"log"
 	"os/exec"
+	"sync"
 	"time"
 
 	"github.com/bwmarrin/discordgo"
@@ -15,10 +16,13 @@ import (
 )
 
 var (
-	MusicStream  = new(stream.StreamingSession)
-	ErrBotStandy = errors.New("Bot is on standy")
-	Playing      = false
-	Queue        = make([]yt_dlpResponse, 0)
+	AfkTime                = 5 * time.Minute
+	MusicStream            = new(stream.StreamingSession)
+	ErrBotStandy           = errors.New("Bot is on standy")
+	Playing                = false
+	Queue                  = make([]yt_dlpResponse, 0)
+	CurrentVoiceConnection = new(discordgo.VoiceConnection)
+	Timers                 sync.Map
 )
 
 type yt_dlpResponse struct {
@@ -37,7 +41,11 @@ type RequestedFormats struct {
 	URL string `json:"url"`
 }
 
-var repeat bool = false
+var (
+	repeat   = false
+	afk      = false
+	starting = false
+)
 
 func encodeFile(song string) (ses *dca.EncodeSession, err error) {
 	options := dca.StdEncodeOptions
@@ -52,14 +60,65 @@ func encodeFile(song string) (ses *dca.EncodeSession, err error) {
 	return
 }
 
+func (b *Bot) HandleVoiceStateUpdate(s *discordgo.Session, i *discordgo.VoiceStateUpdate) {
+	if _, ok := Timers.Load(CurrentBotChannel); ok {
+		return
+	}
+
+	if i.BeforeUpdate != nil {
+		return
+	}
+
+	timer := time.NewTimer(AfkTime)
+	Timers.Store(CurrentBotChannel, timer)
+
+	go func() {
+		for {
+			select {
+			case <-timer.C:
+				CurrentVoiceConnection.Disconnect()
+				timer.Stop()
+				chnl, err := s.Channel(CurrentBotChannel)
+
+				if err != nil {
+					log.Fatal("couldnt get the bot channel")
+					return
+				}
+
+				s.ChannelMessageSend(chnl.ID, "left cuz afk")
+				Timers.Delete(CurrentBotChannel)
+				return
+			default:
+				if Playing {
+					timer.Reset(AfkTime)
+				}
+
+				time.Sleep(1 * time.Second)
+			}
+		}
+	}()
+}
+
 func (b *Bot) startPlaying(s *discordgo.Session, song string, guildID string, channelID string) (err error) {
+	for starting {
+		if !starting {
+			break
+		}
+		time.Sleep(10 * time.Second)
+	}
+	starting = true
 	// Join the provided voice channel.
 	vc, err := s.ChannelVoiceJoin(guildID, channelID, false, true)
+	CurrentVoiceConnection = vc
 	if err != nil {
 		return err
 	}
 
 	go func() {
+		if afk {
+			return
+		}
+		afk = true
 		for {
 			empty := false
 			c, _ := s.GuildChannels(guildID)
@@ -94,6 +153,7 @@ func (b *Bot) startPlaying(s *discordgo.Session, song string, guildID string, ch
 		return err
 	}
 	Playing = true
+	starting = false
 	defer func() { Playing = false }()
 	defer vc.Speaking(false)
 	defer ses.Cleanup()

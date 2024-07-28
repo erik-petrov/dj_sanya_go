@@ -84,6 +84,8 @@ func (b *Bot) setupCommands() {
 		"skip": b.onSkip,
 	}
 
+	b.s.AddHandler(b.HandleVoiceStateUpdate)
+
 	b.s.AddHandler(func(s *discordgo.Session, i *discordgo.InteractionCreate) {
 		if h, ok := commandHandlers[i.ApplicationCommandData().Name]; ok {
 			h(s, i)

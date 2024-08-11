@@ -43,7 +43,6 @@ type RequestedFormats struct {
 
 var (
 	repeat   = false
-	afk      = false
 	starting = false
 )
 
@@ -70,7 +69,7 @@ func (b *Bot) HandleVoiceStateUpdate(s *discordgo.Session, i *discordgo.VoiceSta
 		return
 	}
 
-	timer := 0
+	timer := AfkTime
 	Timers.Store(CurrentBotChannel, timer)
 
 	shit, err := s.Channel(CurrentVoiceConnection.ChannelID)
@@ -90,6 +89,7 @@ func (b *Bot) HandleVoiceStateUpdate(s *discordgo.Session, i *discordgo.VoiceSta
 			timer -= 1
 		}
 		CurrentVoiceConnection.Disconnect()
+		CurrentVoiceConnection = nil
 		chnl, err := s.Channel(CurrentBotChannel)
 
 		if err != nil {
@@ -116,27 +116,6 @@ func (b *Bot) startPlaying(s *discordgo.Session, song string, guildID string, ch
 	if err != nil {
 		return err
 	}
-
-	go func() {
-		if afk {
-			return
-		}
-		afk = true
-		for {
-			empty := false
-			c, _ := s.GuildChannels(guildID)
-			for _, cha := range c {
-				if cha.MemberCount == 1 {
-					empty = true
-				}
-			}
-
-			if empty {
-				vc.Disconnect()
-			}
-			time.Sleep(1 * time.Minute)
-		}
-	}()
 
 	// Start speaking.
 	vc.Speaking(true)
@@ -182,7 +161,7 @@ func (b *Bot) startPlaying(s *discordgo.Session, song string, guildID string, ch
 				}
 				linkToPlay, err := b.downloadVideo(linkToPlay)
 				if err != nil {
-					log.Println(err.Error())
+					log.Println("error downloading msuic: ", err.Error())
 					return
 				}
 				b.startPlaying(s, linkToPlay, guildID, channelID)
@@ -194,7 +173,7 @@ func (b *Bot) startPlaying(s *discordgo.Session, song string, guildID string, ch
 				return
 			}
 			if !errors.Is(err, stream.ErrStreamIsDone) && !(errors.Is(err, io.EOF) && repeat) {
-				log.Println(err.Error())
+				log.Println("stream error: ", err.Error())
 				return
 			}
 		}
@@ -241,7 +220,7 @@ func (b *Bot) getMetadata(ytlink string) (link yt_dlpResponse, err error) {
 		err = nil
 	}
 	if err != nil {
-		log.Fatal(err)
+		log.Fatal("error with yt-dlp finder: ", err)
 	}
 
 	if path == "" {
@@ -254,6 +233,7 @@ func (b *Bot) getMetadata(ytlink string) (link yt_dlpResponse, err error) {
 		"--no-call-home",
 		"--no-cache-dir",
 		"--skip-download",
+		"--force-ipv4",
 		"--restrict-filenames",
 		// provide URL via stdin for security, youtube-dl has some run command args
 		"--batch-file", "-",

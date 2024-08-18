@@ -6,6 +6,7 @@ import (
 	"errors"
 	"io"
 	"log"
+	"os"
 	"os/exec"
 	"sync"
 	"time"
@@ -287,6 +288,7 @@ func (b *Bot) downloadVideo(link string) (string, error) {
 
 	args := []string{
 		"-i", link,
+		"-http_proxy", "http://" + os.Getenv("PROXY_USER") + ":" + os.Getenv("PROXY_PSWD") + "@" + os.Getenv("PROXY") + ":" + os.Getenv("PROXY_PORT"),
 		"-map", "0:a",
 		"-acodec", "libopus",
 		"-f", "ogg",

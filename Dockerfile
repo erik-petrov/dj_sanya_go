@@ -8,7 +8,6 @@ RUN apt-get -y install python3-pip
 RUN apt-get install -y ffmpeg
 RUN apt-get install -y yt-dlp
 COPY . .
-COPY /cookies /code/
 RUN go mod download
 RUN mkdir temp_vids
 CMD ["go", "run", "main.go"]

@@ -236,6 +236,7 @@ func (b *Bot) getMetadata(ytlink string) (link yt_dlpResponse, err error) {
 		"--skip-download",
 		"--force-ipv4",
 		"--restrict-filenames",
+		"--cookies", "/cookies",
 		// provide URL via stdin for security, youtube-dl has some run command args
 		"--batch-file", "-",
 		"-J", "-s",

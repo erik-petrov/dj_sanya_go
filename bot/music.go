@@ -301,8 +301,7 @@ func (b *Bot) downloadVideo(link string) (string, error) {
 		return "", err
 	}
 	if err := ffmpeg.Wait(); err != nil {
-		log.Println(ffmpeg.Stderr)
-		log.Println(ffmpeg.Stdout)
+		log.Println(link)
 		return "", err
 	}
 

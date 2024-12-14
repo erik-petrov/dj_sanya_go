@@ -18,7 +18,7 @@ jobs:
         run: | 
           echo ${{secrets.PAT}} | sudo docker login -u koteman123 --password-stdin
           sudo docker buildx create --use
-          sudo docker buildx build --annotation "manifest[linux/arm64]" --push -t ${{ steps.vars.outputs.img }} .
+          sudo docker buildx build --platform linux/arm64 --push -t ${{ steps.vars.outputs.img }} .
           
       - name: Deploy
         uses: appleboy/ssh-action@master

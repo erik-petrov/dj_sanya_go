@@ -21,6 +21,7 @@ type YTResponse struct {
 		ID struct {
 			VideoID string `json:"videoId"`
 		} `json:"id"`
+
 		Snippet struct {
 			Title string `jsin:"title"`
 		}

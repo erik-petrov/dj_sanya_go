@@ -1,0 +1,8 @@
+version: '3.8'
+
+services:
+  dj_sanya_go:
+    image: koteman123/dj_sanya_go:${VERSION}
+    container_name: sanya
+    env_file: ".env"
+    restart: unless-stopped

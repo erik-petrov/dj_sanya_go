@@ -2,7 +2,8 @@ name: Docker Image CI
 
 on:
   push:
-    branches: [ "main" ]
+    tags: 
+      - "v1*"
 
 jobs:
   build:
@@ -12,20 +13,22 @@ jobs:
       - uses: actions/checkout@v4
       - name: Set up variables
         id: vars
-        run: echo ::set-output name=img::koteman123/dj_sanya_go:latest
+        run: echo ::set-output name=tag::${GITHUB_REF#refs/tags/}
             
       - name: Build the Docker image
         run: | 
           echo ${{secrets.PAT}} | sudo docker login -u koteman123 --password-stdin
           sudo docker buildx create --use
-          sudo docker buildx build --platform linux/amd64 --push -t ${{ steps.vars.outputs.img }} .
+          sudo docker buildx build --push -t koteman123/dj_sanya_go:${{ steps.vars.outputs.tag }} .
           
       - name: Deploy
         uses: appleboy/ssh-action@master
+        env:
+          VERSION: ${{ steps.vars.outputs.tag }}
         with: 
           host: ${{ secrets.SSH_HOST }}
           port: ${{ secrets.SSH_PORT }}
           username: ${{ secrets.SSH_USERNAME }}
           key: ${{ secrets.SSH_KEY }}
           script_stop: true
-          script: ./start_sanya.sh ${{ steps.vars.outputs.img }}
+          script: VERSION=${VERSION:1} ./start_sanya.sh 

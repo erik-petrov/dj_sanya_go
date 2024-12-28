@@ -50,7 +50,7 @@ func (b *Bot) onPlay(s *discordgo.Session, i *discordgo.InteractionCreate) {
 	switch i.ApplicationCommandData().Options[0].Type {
 	case 3: //string
 		link = i.ApplicationCommandData().Options[0].StringValue()
-		if !checkSubstrings(link, "youtu.be", "youtube") {
+		if !checkSubstrings(link, "youtu.be", "youtube", "soundcloud") {
 			songlink, err := getLinkTitle(link, b.ytToken, s, i)
 			if err != nil {
 				s.FollowupMessageCreate(i.Interaction, true, &discordgo.WebhookParams{

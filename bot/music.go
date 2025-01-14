@@ -6,6 +6,7 @@ import (
 	"errors"
 	"io"
 	"log"
+	"os"
 	"os/exec"
 	"sync"
 	"time"
@@ -81,7 +82,7 @@ func (b *Bot) HandleVoiceStateUpdate(s *discordgo.Session, i *discordgo.VoiceSta
 
 	go func() {
 		for timer > 1 {
-			if Playing && shit.MemberCount > 1 {
+			if (Playing || starting) && shit.MemberCount > 1 {
 				timer = AfkTime
 			}
 
@@ -191,18 +192,23 @@ func (b *Bot) startPlaying(s *discordgo.Session, song string, guildID string, ch
 	return err
 }
 
-func (b *Bot) playSong(link string, attachment bool) (yt_dlpResponse, error) {
+func (b *Bot) playSong(link string, attachment bool, songCh chan<- yt_dlpResponse, errCh chan<- error) {
 	if attachment {
-		return yt_dlpResponse{
+		songCh <- yt_dlpResponse{
 			WebpageURL:         link,
 			RequestedDownloads: []RequestedDownloads{{[]RequestedFormats{{}, {URL: link}}}}, //since 1st is usually the video
-		}, nil
+		}
+		errCh <- nil
+		return
 	}
 	resp, err := b.getMetadata(link)
 	if err != nil {
-		return yt_dlpResponse{}, err
+		songCh <- yt_dlpResponse{}
+		errCh <- err
+		return
 	}
-	return resp, nil
+	songCh <- resp
+	errCh <- nil
 }
 
 func (b *Bot) IsPlaying() bool {
@@ -221,11 +227,17 @@ func (b *Bot) getMetadata(ytlink string) (link yt_dlpResponse, err error) {
 	}
 	if err != nil {
 		log.Fatal("error with yt-dlp finder: ", err)
+		return yt_dlpResponse{}, err
 	}
 
 	if path == "" {
 		log.Fatal("yt-dlp not installed")
 		return yt_dlpResponse{}, errors.New("yt-dlp missing")
+	}
+
+	cookies := "--cookies /cookies"
+	if _, err := os.Stat("/cookies"); errors.Is(err, os.ErrNotExist) {
+		cookies = ""
 	}
 
 	args := []string{
@@ -235,7 +247,7 @@ func (b *Bot) getMetadata(ytlink string) (link yt_dlpResponse, err error) {
 		"--skip-download",
 		"--force-ipv4",
 		"--restrict-filenames",
-		"--cookies", "/cookies",
+		cookies,
 		// provide URL via stdin for security, youtube-dl has some run command args
 		"--batch-file", "-",
 		"-J", "-s",
@@ -244,7 +256,7 @@ func (b *Bot) getMetadata(ytlink string) (link yt_dlpResponse, err error) {
 	ffmpeg := exec.Command("yt-dlp", args...)
 	ffmpeg.Stdin = bytes.NewBufferString(ytlink + "\n")
 
-	stdout, _ := ffmpeg.StdoutPipe()
+	stdout, err := ffmpeg.StdoutPipe()
 
 	if err != nil {
 		return yt_dlpResponse{}, err

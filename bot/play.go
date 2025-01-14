@@ -8,12 +8,14 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"sync"
 
 	"github.com/bwmarrin/discordgo"
 )
 
 var (
 	CurrentBotChannel string
+	wg                sync.WaitGroup
 )
 
 type YTResponse struct {
@@ -68,7 +70,17 @@ func (b *Bot) onPlay(s *discordgo.Session, i *discordgo.InteractionCreate) {
 		attachment = true
 	}
 
-	song, err := b.playSong(link, attachment)
+	songCh := make(chan yt_dlpResponse)
+	errCh := make(chan error)
+	wg.Wait()
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		b.playSong(link, attachment, songCh, errCh)
+	}()
+
+	song := <-songCh
+	err := <-errCh
 
 	if attachment {
 		song.Title = title

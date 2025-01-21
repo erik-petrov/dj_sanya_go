@@ -6,3 +6,5 @@ services:
     container_name: sanya
     env_file: ".env"
     restart: unless-stopped
+    volumes:
+      - /cookies:/cookies

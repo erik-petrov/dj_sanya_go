@@ -235,8 +235,8 @@ func (b *Bot) getMetadata(ytlink string) (link yt_dlpResponse, err error) {
 		return yt_dlpResponse{}, errors.New("yt-dlp missing")
 	}
 
-	cookies := "--cookies /cookies"
-	if _, err := os.Stat("/cookies"); errors.Is(err, os.ErrNotExist) {
+	cookies := "--cookies /cookies/cookies"
+	if _, err := os.Stat("/cookies/cookies"); errors.Is(err, os.ErrNotExist) {
 		cookies = ""
 	}
 
@@ -254,8 +254,8 @@ func (b *Bot) getMetadata(ytlink string) (link yt_dlpResponse, err error) {
 	}
 
 	ffmpeg := exec.Command("yt-dlp", args...)
-	ffmpeg.Stdin = bytes.NewBufferString(ytlink + "\n")
 
+	ffmpeg.Stdin = bytes.NewBufferString(ytlink + "\n")
 	stdout, err := ffmpeg.StdoutPipe()
 
 	if err != nil {
@@ -269,13 +269,16 @@ func (b *Bot) getMetadata(ytlink string) (link yt_dlpResponse, err error) {
 	zalupa := json.NewDecoder(stdout)
 	for {
 		infoErr := zalupa.Decode(&link)
+		log.Println(infoErr)
 		if infoErr == io.EOF {
 			break
 		}
+
 		if infoErr != nil {
 			return yt_dlpResponse{}, err
 		}
 	}
+
 	if err := ffmpeg.Wait(); err != nil {
 		return yt_dlpResponse{}, err
 	}

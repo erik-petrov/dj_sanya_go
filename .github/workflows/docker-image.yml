@@ -31,4 +31,4 @@ jobs:
           username: ${{ secrets.SSH_USERNAME }}
           key: ${{ secrets.SSH_KEY }}
           script_stop: true
-          script: VERSION=${VERSION:1} ./start_sanya.sh 
+          script: VERSION=${VERSION} ./start_sanya.sh 

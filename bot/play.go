@@ -82,15 +82,15 @@ func (b *Bot) onPlay(s *discordgo.Session, i *discordgo.InteractionCreate) {
 	song := <-songCh
 	err := <-errCh
 
-	if attachment {
-		song.Title = title
-	}
-
 	if err != nil {
 		s.FollowupMessageCreate(i.Interaction, true, &discordgo.WebhookParams{
 			Content: "Something went wrong: " + err.Error(),
 		})
 		return
+	}
+
+	if attachment {
+		song.Title = title
 	}
 
 	if b.IsPlaying() {
@@ -130,6 +130,7 @@ func (b *Bot) onPlay(s *discordgo.Session, i *discordgo.InteractionCreate) {
 			if len(song.RequestedDownloads[0].RequestedFormats) == 0 {
 				rawURL = song.FallbackURL
 			} else {
+				log.Println(song.RequestedDownloads)
 				rawURL = song.RequestedDownloads[0].RequestedFormats[1].URL
 			}
 

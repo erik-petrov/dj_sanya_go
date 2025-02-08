@@ -235,25 +235,29 @@ func (b *Bot) getMetadata(ytlink string) (link yt_dlpResponse, err error) {
 		return yt_dlpResponse{}, errors.New("yt-dlp missing")
 	}
 
-	cookies := "--cookies /cookies/cookies"
-	if _, err := os.Stat("/cookies/cookies"); errors.Is(err, os.ErrNotExist) {
+	cookies := "--cookies"
+	cookiepath := "C:/Users/kotem/Desktop/cookies.txt"
+	if _, err := os.Stat(path); errors.Is(err, os.ErrNotExist) {
 		cookies = ""
+		path = ""
 	}
 
 	args := []string{
-		"--ignore-errors",
 		"--no-call-home",
 		"--no-cache-dir",
 		"--skip-download",
 		"--force-ipv4",
 		"--restrict-filenames",
-		cookies,
+		cookies, cookiepath,
 		// provide URL via stdin for security, youtube-dl has some run command args
 		"--batch-file", "-",
 		"-J", "-s",
 	}
 
 	ffmpeg := exec.Command("yt-dlp", args...)
+
+	var oshibka bytes.Buffer
+	ffmpeg.Stderr = &oshibka
 
 	ffmpeg.Stdin = bytes.NewBufferString(ytlink + "\n")
 	stdout, err := ffmpeg.StdoutPipe()
@@ -269,21 +273,21 @@ func (b *Bot) getMetadata(ytlink string) (link yt_dlpResponse, err error) {
 	zalupa := json.NewDecoder(stdout)
 	for {
 		infoErr := zalupa.Decode(&link)
-		log.Println(infoErr)
 		if infoErr == io.EOF {
 			break
 		}
 
 		if infoErr != nil {
-			return yt_dlpResponse{}, err
+			return yt_dlpResponse{}, errors.New(oshibka.String())
 		}
 	}
 
 	if err := ffmpeg.Wait(); err != nil {
-		return yt_dlpResponse{}, err
+		log.Println(oshibka.String())
+		return yt_dlpResponse{}, errors.New(oshibka.String())
 	}
 
-	return link, nil
+	return link, nil //link, nil
 }
 
 func (b *Bot) downloadVideo(link string) (string, error) {

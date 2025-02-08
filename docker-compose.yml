@@ -7,4 +7,4 @@ services:
     env_file: ".env"
     restart: unless-stopped
     volumes:
-      - /cookies:/cookies
+      - ./cookies.txt:/cookies.txt

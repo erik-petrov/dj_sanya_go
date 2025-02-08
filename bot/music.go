@@ -236,7 +236,7 @@ func (b *Bot) getMetadata(ytlink string) (link yt_dlpResponse, err error) {
 	}
 
 	cookies := "--cookies"
-	cookiepath := "C:/Users/kotem/Desktop/cookies.txt"
+	cookiepath := "/cookies.txt"
 	if _, err := os.Stat(path); errors.Is(err, os.ErrNotExist) {
 		cookies = ""
 		path = ""

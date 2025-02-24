@@ -1,7 +1,9 @@
 package bot
 
 import (
+	"fmt"
 	"log"
+	"time"
 
 	"github.com/bwmarrin/discordgo"
 )
@@ -26,11 +28,38 @@ func New(boot Boot) (*Bot, error) {
 func (b *Bot) Start() error {
 	err := b.s.Open()
 	b.setupCommands()
+	b.sirusParsing()
 	return err
 }
 
 func (b *Bot) Close() {
 	b.s.Close()
+}
+
+func (b *Bot) sirusParsing() {
+	go func() {
+		sirusDataChannel := "1340979801250467861"
+		lastStatus := false
+		for {
+			name, status := b.CheckSirusUp()
+			var str string
+			if status {
+				str = "`WoW Sirus " + name + " теперь имеет статус: онлайн! Скорее заходите чтобы получить 1.5х опыта!`"
+			} else {
+				str = "`WoW Sirus " + name + " теперь имеет статус: оффлайн! Скорее заходите чтобы получить 1.5х опыта!`"
+			}
+
+			if lastStatus != status {
+				_, err := b.s.ChannelMessageSend(sirusDataChannel, str)
+				if err != nil {
+					fmt.Println(err)
+				}
+
+				lastStatus = status
+			}
+			time.Sleep(1 * time.Minute)
+		}
+	}()
 }
 
 func (b *Bot) setupCommands() {

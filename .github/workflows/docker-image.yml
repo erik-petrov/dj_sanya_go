@@ -30,5 +30,6 @@ jobs:
           port: ${{ secrets.SSH_PORT }}
           username: ${{ secrets.SSH_USERNAME }}
           key: ${{ secrets.SSH_KEY }}
+          envs: VERSION
           script_stop: true
           script: VERSION=${VERSION} ./start_sanya.sh 

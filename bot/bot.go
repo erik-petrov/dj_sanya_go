@@ -57,7 +57,7 @@ func (b *Bot) sirusParsing() {
 
 				lastStatus = status
 			}
-			time.Sleep(1 * time.Minute)
+			time.Sleep(10 * time.Second)
 		}
 	}()
 }

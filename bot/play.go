@@ -2,13 +2,17 @@ package bot
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log"
 	"net/http"
 	"net/url"
+	"slices"
+	"sort"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/bwmarrin/discordgo"
 )
@@ -213,6 +217,87 @@ func (b *Bot) onSkip(s *discordgo.Session, i *discordgo.InteractionCreate) {
 	})
 }
 
+func (b *Bot) wakeUp(s *discordgo.Session, i *discordgo.InteractionCreate) {
+	var ogVoice string
+	var skipVcs []string
+
+	g, _ := s.State.Guild(i.GuildID)
+	vs := g.VoiceStates
+	target := i.ApplicationCommandData().Options[0].UserValue(s)
+	for _, voice := range vs {
+		if target.ID == voice.UserID {
+			ogVoice = voice.ChannelID
+		}
+
+		if !slices.Contains(skipVcs, voice.ChannelID) {
+			skipVcs = append(skipVcs, voice.ChannelID)
+		}
+	}
+
+	s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
+		Type: discordgo.InteractionResponseChannelMessageWithSource,
+		Data: &discordgo.InteractionResponseData{
+			Content: "Waking up " + target.Mention() + "...",
+		},
+	})
+
+	chans := g.Channels
+	sort.Slice(chans, func(i, j int) bool {
+		return chans[i].Position < chans[j].Position
+	})
+
+	for j := 0; j < 3; j++ {
+		if _, err := findUserVoiceState(target.ID, g); err != nil {
+			log.Println(err)
+			return
+		}
+
+		for _, voice := range chans {
+			if slices.Contains(skipVcs, voice.ID) {
+				continue
+			}
+
+			if voice.Type != discordgo.ChannelTypeGuildVoice {
+				continue
+			}
+
+			perms, err := s.State.UserChannelPermissions(s.State.User.ID, voice.ID)
+			if err != nil {
+				log.Println(err)
+				break
+			}
+
+			if perms&discordgo.PermissionVoiceMoveMembers != discordgo.PermissionVoiceMoveMembers {
+				continue
+			}
+
+			if ogVoice == voice.ID {
+				continue
+			}
+
+			if voice.MemberCount != 0 {
+				continue
+			}
+
+			err = s.GuildMemberMove(g.ID, target.ID, &voice.ID)
+			if err != nil {
+				log.Println(err)
+				break
+			}
+			time.Sleep(300 * time.Millisecond)
+		}
+
+	}
+	s.GuildMemberMove(g.ID, target.ID, &ogVoice)
+
+	s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
+		Type: discordgo.InteractionResponseChannelMessageWithSource,
+		Data: &discordgo.InteractionResponseData{
+			Content: "Done!",
+		},
+	})
+}
+
 func checkSubstrings(str string, subs ...string) bool {
 	for _, sub := range subs {
 		if strings.Contains(str, sub) {
@@ -255,4 +340,13 @@ func getLinkTitle(link string, token string, s *discordgo.Session, i *discordgo.
 	}
 	ytlink = "https://youtube.com/watch?v=" + response.Results[0].ID.VideoID
 	return ytlink, nil
+}
+
+func findUserVoiceState(userid string, guild *discordgo.Guild) (*discordgo.VoiceState, error) {
+	for _, vs := range guild.VoiceStates {
+		if vs.UserID == userid {
+			return vs, nil
+		}
+	}
+	return nil, errors.New("could not find user's voice state")
 }

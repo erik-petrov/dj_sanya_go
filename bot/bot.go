@@ -39,14 +39,14 @@ func (b *Bot) Close() {
 func (b *Bot) sirusParsing() {
 	go func() {
 		sirusDataChannel := "1340979801250467861"
-		lastStatus := false
+		lastStatus := true
 		for {
 			name, status := b.CheckSirusUp()
 			var str string
 			if status {
 				str = "`WoW Sirus " + name + " теперь имеет статус: онлайн! Скорее заходите чтобы получить 1.5х опыта!`"
 			} else {
-				str = "`WoW Sirus " + name + " теперь имеет статус: оффлайн! Следите за запуском чтобыы не пропустить 1.5х опыта!`"
+				str = "`WoW Sirus " + name + " теперь имеет статус: оффлайн! Следите за запуском чтобы не пропустить 1.5х опыта!`"
 			}
 
 			if lastStatus != status {
@@ -99,6 +99,18 @@ func (b *Bot) setupCommands() {
 			Name:        "skip",
 			Description: "Skips the currently playing song for a next one",
 		},
+		{
+			Name:        "wakeup",
+			Description: "Wakes the user up by shuffling them a lot.",
+			Options: []*discordgo.ApplicationCommandOption{
+				{
+					Type:        discordgo.ApplicationCommandOptionUser,
+					Name:        "user",
+					Description: "User to wake up",
+					Required:    true,
+				},
+			},
+		},
 	}
 
 	commandHandlers := map[string]func(s *discordgo.Session, i *discordgo.InteractionCreate){
@@ -111,6 +123,8 @@ func (b *Bot) setupCommands() {
 		"play": b.onPlay,
 
 		"skip": b.onSkip,
+
+		"wakeup": b.wakeUp,
 	}
 
 	b.s.AddHandler(b.HandleVoiceStateUpdate)

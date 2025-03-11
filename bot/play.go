@@ -284,6 +284,7 @@ func (b *Bot) wakeUp(s *discordgo.Session, i *discordgo.InteractionCreate) {
 				log.Println(err)
 				break
 			}
+
 			time.Sleep(300 * time.Millisecond)
 		}
 

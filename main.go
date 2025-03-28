@@ -24,9 +24,11 @@ func main() {
 	}
 
 	boot := bot.Boot{
-		GuildID:  GuildID,
-		Token:    os.Getenv("BOT_TOKEN"),
-		YT_Token: os.Getenv("YT_TOKEN"),
+		GuildID:   GuildID,
+		Token:     os.Getenv("BOT_TOKEN"),
+		YT_Token:  os.Getenv("YT_TOKEN"),
+		SF_Token:  os.Getenv("SPOTIFY_ID"),
+		SF_Secret: os.Getenv("SPOTIFY_SECRET"),
 	}
 
 	bot, err := bot.New(boot)

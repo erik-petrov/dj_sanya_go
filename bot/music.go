@@ -21,12 +21,12 @@ var (
 	MusicStream            *stream.StreamingSession
 	ErrBotStandy           = errors.New("Bot is on standy")
 	Playing                = false
-	Queue                  = make([]yt_dlpResponse, 0)
+	Queue                  = make([]YTDLPResponse, 0)
 	CurrentVoiceConnection *discordgo.VoiceConnection
 	Timers                 sync.Map
 )
 
-type yt_dlpResponse struct {
+type YTDLPResponse struct {
 	Title              string               `json:"title"`
 	WebpageURL         string               `json:"website_url"`
 	Duration           string               `json:"duration_string"`
@@ -192,9 +192,9 @@ func (b *Bot) startPlaying(s *discordgo.Session, song string, guildID string, ch
 	return err
 }
 
-func (b *Bot) playSong(link string, attachment bool, songCh chan<- yt_dlpResponse, errCh chan<- error) {
+func (b *Bot) playSong(link string, attachment bool, songCh chan<- YTDLPResponse, errCh chan<- error) {
 	if attachment {
-		songCh <- yt_dlpResponse{
+		songCh <- YTDLPResponse{
 			WebpageURL:         link,
 			RequestedDownloads: []RequestedDownloads{{[]RequestedFormats{{}, {URL: link}}}}, //since 1st is usually the video
 		}
@@ -203,7 +203,7 @@ func (b *Bot) playSong(link string, attachment bool, songCh chan<- yt_dlpRespons
 	}
 	resp, err := b.getMetadata(link)
 	if err != nil {
-		songCh <- yt_dlpResponse{}
+		songCh <- YTDLPResponse{}
 		errCh <- err
 		return
 	}
@@ -215,31 +215,36 @@ func (b *Bot) IsPlaying() bool {
 	return Playing
 }
 
-func (b *Bot) AddToQueue(song yt_dlpResponse) {
+func (b *Bot) AddToQueue(song YTDLPResponse) {
 	Queue = append(Queue, song)
-	log.Println(len(Queue))
 }
 
-func (b *Bot) getMetadata(ytlink string) (link yt_dlpResponse, err error) {
+func (b *Bot) getMetadata(ytlink string) (link YTDLPResponse, err error) {
 	path, err := exec.LookPath("yt-dlp")
 	if errors.Is(err, exec.ErrDot) {
 		err = nil
 	}
 	if err != nil {
 		log.Fatal("error with yt-dlp finder: ", err)
-		return yt_dlpResponse{}, err
+		return YTDLPResponse{}, err
 	}
 
 	if path == "" {
 		log.Fatal("yt-dlp not installed")
-		return yt_dlpResponse{}, errors.New("yt-dlp missing")
+		return YTDLPResponse{}, errors.New("yt-dlp missing")
 	}
 
 	cookies := "--cookies"
-	cookiepath := "/cookies.txt"
-	if _, err := os.Stat(path); errors.Is(err, os.ErrNotExist) {
+	var cookiepath string
+	if os.Getenv("TESTING") != "true" {
+		cookiepath = "/cookies.txt"
+	} else {
+		cookiepath = "./cookies.txt"
+	}
+
+	if _, err := os.Stat(path); err != nil {
 		cookies = ""
-		path = ""
+		cookiepath = ""
 	}
 
 	args := []string{
@@ -263,11 +268,11 @@ func (b *Bot) getMetadata(ytlink string) (link yt_dlpResponse, err error) {
 	stdout, err := ffmpeg.StdoutPipe()
 
 	if err != nil {
-		return yt_dlpResponse{}, err
+		return YTDLPResponse{}, err
 	}
 
 	if err := ffmpeg.Start(); err != nil {
-		return yt_dlpResponse{}, err
+		return YTDLPResponse{}, err
 	}
 
 	zalupa := json.NewDecoder(stdout)
@@ -278,13 +283,13 @@ func (b *Bot) getMetadata(ytlink string) (link yt_dlpResponse, err error) {
 		}
 
 		if infoErr != nil {
-			return yt_dlpResponse{}, errors.New(oshibka.String())
+			return YTDLPResponse{}, errors.New(oshibka.String())
 		}
 	}
 
 	if err := ffmpeg.Wait(); err != nil {
 		log.Println(oshibka.String())
-		return yt_dlpResponse{}, errors.New(oshibka.String())
+		return YTDLPResponse{}, errors.New(oshibka.String())
 	}
 
 	return link, nil //link, nil
@@ -320,7 +325,6 @@ func (b *Bot) downloadVideo(link string) (string, error) {
 		return "", err
 	}
 	if err := ffmpeg.Wait(); err != nil {
-		log.Println(link)
 		return "", err
 	}
 

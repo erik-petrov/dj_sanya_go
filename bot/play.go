@@ -1,13 +1,15 @@
 package bot
 
 import (
+	"bytes"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"io"
 	"log"
 	"net/http"
 	"net/url"
+	"os"
 	"slices"
 	"sort"
 	"strings"
@@ -20,6 +22,7 @@ import (
 var (
 	CurrentBotChannel string
 	wg                sync.WaitGroup
+	spotifyBearer     string
 )
 
 type YTResponse struct {
@@ -32,6 +35,30 @@ type YTResponse struct {
 			Title string `jsin:"title"`
 		}
 	} `json:"items"`
+}
+
+type SpotifyResponse struct {
+	Token string `json:"access_token"`
+}
+
+type Artist struct {
+	Link string `json:"href"`
+	Name string `json:"name"`
+}
+
+type Album struct {
+	Image []struct {
+		URL string `json:"url"`
+	} `json:"images"`
+	Name string `json:"name"`
+	URL  string `json:"href"`
+	Date string `json:"release_date"`
+}
+
+type SpotifySong struct {
+	Artist []Artist `json:"artists"`
+	Name   string   `json:"name"`
+	Album  Album    `json:"album"`
 }
 
 func (b *Bot) onPlay(s *discordgo.Session, i *discordgo.InteractionCreate) {
@@ -56,16 +83,36 @@ func (b *Bot) onPlay(s *discordgo.Session, i *discordgo.InteractionCreate) {
 	switch i.ApplicationCommandData().Options[0].Type {
 	case 3: //string
 		link = i.ApplicationCommandData().Options[0].StringValue()
-		if !checkSubstrings(link, "youtu.be", "youtube", "soundcloud") {
-			songlink, err := getLinkTitle(link, b.ytToken, s, i)
+
+		var err error
+		var songlink string
+
+		if !checkSubstrings(link, "youtu.be", "youtube", "soundcloud", "open.spotify", "spotify.com") {
+			songlink, err = getLinkTitle(link, b.ytToken, s, i)
+		} else if checkSubstrings(link, "open.spotify", "spotify.com") {
+			var song SpotifySong
+			song, err = getSpotifyLinkName(link)
 			if err != nil {
 				s.FollowupMessageCreate(i.Interaction, true, &discordgo.WebhookParams{
 					Content: "Something went wrong: " + err.Error(),
 				})
 				return
 			}
-			link = songlink
+
+			songlink, err = getLinkTitle(song.Name+" "+song.Artist[0].Name+" lyrics", b.ytToken, s, i)
+		} else {
+			songlink = link
 		}
+
+		if err != nil {
+			s.FollowupMessageCreate(i.Interaction, true, &discordgo.WebhookParams{
+				Content: "Something went wrong: " + err.Error(),
+			})
+			return
+		}
+
+		link = songlink
+
 	case 11: //attachment
 		attachmentID := i.ApplicationCommandData().Options[0].Value.(string)
 		file := i.ApplicationCommandData().Resolved.Attachments[attachmentID]
@@ -74,7 +121,7 @@ func (b *Bot) onPlay(s *discordgo.Session, i *discordgo.InteractionCreate) {
 		attachment = true
 	}
 
-	songCh := make(chan yt_dlpResponse)
+	songCh := make(chan YTDLPResponse)
 	errCh := make(chan error)
 	wg.Wait()
 	wg.Add(1)
@@ -318,18 +365,18 @@ func getLinkTitle(link string, token string, s *discordgo.Session, i *discordgo.
 	searchURL := "https://www.googleapis.com/youtube/v3/search?part=snippet&maxResults=1&q=" + url.QueryEscape(link) + "&type=video&key=" + token
 	res, err := http.DefaultClient.Get(searchURL)
 	if err != nil {
-		fmt.Printf("couldnt make the search request: %s\n", err)
+		log.Printf("couldnt make the search request: %s\n", err)
 		return "", err
 	}
 	resBody, err := io.ReadAll(res.Body)
 	if err != nil {
-		fmt.Printf("could not read response body: %s\n", err)
+		log.Printf("could not read response body: %s\n", err)
 		return "", err
 	}
 	var response YTResponse
 	err = json.Unmarshal([]byte(resBody), &response)
 	if err != nil {
-		fmt.Printf("could not parse response: %s.\n body: %s\n request: %s\n", err, resBody, searchURL)
+		log.Printf("could not parse response: %s.\n body: %s\n request: %s\n", err, resBody, searchURL)
 		return "", err
 	}
 	if len(response.Results) == 0 {
@@ -350,4 +397,104 @@ func findUserVoiceState(userid string, guild *discordgo.Guild) (*discordgo.Voice
 		}
 	}
 	return nil, errors.New("could not find user's voice state")
+}
+
+func getSpotifyLinkName(link string) (SpotifySong, error) {
+	spotifyBearer, err := getSpotifyBearer()
+
+	if err != nil {
+		return SpotifySong{}, err
+	}
+
+	id := strings.Split(link[strings.LastIndex(link, "/")+1:], "?")[0]
+
+	h := http.Header{}
+	h.Add("Authorization", "Bearer "+spotifyBearer)
+
+	url, _ := url.Parse("https://api.spotify.com/v1/tracks/" + id)
+
+	req := http.Request{
+		URL:    url,
+		Method: http.MethodGet,
+		Header: h,
+	}
+
+	res, err := http.DefaultClient.Do(&req)
+
+	if err != nil {
+		log.Println("Error while making HTTP request for spotify song: ", err)
+		return SpotifySong{}, err
+	}
+
+	resBody, err := io.ReadAll(res.Body)
+
+	if err != nil {
+		log.Println("Error while making taking body out of the spotify song request: ", err)
+		return SpotifySong{}, err
+	}
+
+	var sp SpotifySong
+	err = json.Unmarshal([]byte(resBody), &sp)
+
+	if err != nil {
+		log.Println("Error while unmarshaling spotify song data: ", err)
+		return SpotifySong{}, err
+	}
+
+	return sp, nil
+}
+
+func getSpotifyBearer() (string, error) {
+	if !tokenExpired() {
+		return spotifyBearer, nil
+	}
+
+	values := url.Values{}
+	values.Add("grant_type", "client_credentials")
+
+	req, err := http.NewRequest("POST", "https://accounts.spotify.com/api/token", bytes.NewBufferString(values.Encode()))
+	if err != nil {
+		log.Println("error making a request: ", err)
+		return "", err
+	}
+	req.Header.Add("Authorization", "Basic "+base64.StdEncoding.EncodeToString([]byte(os.Getenv("SPOTIFY_ID")+":"+os.Getenv("SPOTIFY_SECRET"))))
+	req.Header.Add("Content-Type", "application/x-www-form-urlencoded")
+
+	res, err := http.DefaultClient.Do(req)
+	if err != nil {
+		log.Println("error getting spotify bearer link: ", err)
+		return "", err
+	}
+
+	if res.StatusCode != 200 {
+		body, _ := io.ReadAll(res.Body)
+		return "", errors.New(string(body))
+	}
+
+	var response SpotifyResponse
+	body, _ := io.ReadAll(res.Body)
+	json.Unmarshal(body, &response)
+	return response.Token, nil
+}
+
+func tokenExpired() bool {
+	h := http.Header{}
+	h.Add("Authorization", "Bearer "+spotifyBearer)
+
+	cl := &http.Client{}
+	url, _ := url.Parse("https://api.spotify.com/v1/search?q=+skibidi&type=track")
+	req := &http.Request{
+		Header: h,
+		Method: http.MethodGet,
+		URL:    url,
+	}
+
+	res, err := cl.Do(req)
+
+	if err != nil {
+		log.Println("error checking link expiry")
+		return true
+	}
+
+	return res.StatusCode != 200
 }

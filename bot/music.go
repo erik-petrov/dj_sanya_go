@@ -81,8 +81,14 @@ func (b *Bot) HandleVoiceStateUpdate(s *discordgo.Session, i *discordgo.VoiceSta
 	}
 
 	go func() {
+		msg := "left cuz afk"
 		for timer > 1 {
-			if (Playing || starting) && shit.MemberCount > 1 {
+			if shit.MemberCount < 2 {
+				msg = "everyone left"
+				break
+			}
+
+			if Playing || starting {
 				timer = AfkTime
 			}
 
@@ -98,7 +104,7 @@ func (b *Bot) HandleVoiceStateUpdate(s *discordgo.Session, i *discordgo.VoiceSta
 			return
 		}
 
-		s.ChannelMessageSend(chnl.ID, "left cuz afk")
+		s.ChannelMessageSend(chnl.ID, msg)
 		Timers.Delete(CurrentBotChannel)
 	}()
 }
@@ -137,11 +143,16 @@ func (b *Bot) startPlaying(s *discordgo.Session, song string, guildID string, ch
 	}
 	Playing = true
 	starting = false
-	defer func() { Playing = false }()
+
 	defer vc.Speaking(false)
 	defer ses.Cleanup()
 
 	go func() {
+		defer func() {
+			if !repeat || len(Queue) < 1 {
+				Playing = false
+			}
+		}()
 		for {
 			if !vc.Ready {
 				return
@@ -151,7 +162,12 @@ func (b *Bot) startPlaying(s *discordgo.Session, song string, guildID string, ch
 			if errors.Is(err, stream.ErrStopped) {
 				return
 			}
-			if len(Queue) >= 1 && !repeat && (errors.Is(err, io.EOF) || errors.Is(err, stream.ErrStreamIsDone)) {
+
+			if repeat {
+				b.startPlaying(s, song, guildID, channelID)
+			}
+
+			if len(Queue) >= 1 && (errors.Is(err, io.EOF) || errors.Is(err, stream.ErrStreamIsDone)) {
 				toPlay := Queue[0]
 				Queue = Queue[1:]
 				linkToPlay := ""
@@ -162,17 +178,16 @@ func (b *Bot) startPlaying(s *discordgo.Session, song string, guildID string, ch
 				}
 				linkToPlay, err := b.downloadVideo(linkToPlay)
 				if err != nil {
-					log.Println("error downloading msuic: ", err.Error())
+					log.Println("error downloading music: ", err.Error())
 					return
 				}
 				b.startPlaying(s, linkToPlay, guildID, channelID)
 			}
-			if repeat {
-				b.startPlaying(s, song, guildID, channelID)
-			}
+
 			if !Playing {
 				return
 			}
+
 			if !errors.Is(err, stream.ErrStreamIsDone) && !(errors.Is(err, io.EOF) && repeat) {
 				log.Println("stream error: ", err.Error())
 				return
@@ -182,13 +197,15 @@ func (b *Bot) startPlaying(s *discordgo.Session, song string, guildID string, ch
 	}()
 
 	err = <-done
-	if err != nil && err != io.EOF {
-		return err
-	}
 
+	//errors that arent bad
 	if err == io.EOF || err == stream.ErrSkipped || err == stream.ErrStopped {
 		return nil
 	}
+
+	//bad
+	Playing = false
+	repeat = false
 	return err
 }
 

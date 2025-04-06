@@ -32,7 +32,13 @@ type YTResponse struct {
 		} `json:"id"`
 
 		Snippet struct {
-			Title string `jsin:"title"`
+			Title      string `json:"title"`
+			Thumbnails struct {
+				Thumbnail struct {
+					URL string `json:"url"`
+				} `json:"high"`
+			} `json:"thumbnails"`
+			Channel string `json:"channelTitle"`
 		}
 	} `json:"items"`
 }
@@ -85,11 +91,9 @@ func (b *Bot) onPlay(s *discordgo.Session, i *discordgo.InteractionCreate) {
 		link = i.ApplicationCommandData().Options[0].StringValue()
 
 		var err error
-		var songlink string
+		var songlink YTResponse
 
-		if !checkSubstrings(link, "youtu.be", "youtube", "soundcloud", "open.spotify", "spotify.com") {
-			songlink, err = getLinkTitle(link, b.ytToken, s, i)
-		} else if checkSubstrings(link, "open.spotify", "spotify.com") {
+		if checkSubstrings(link, "open.spotify", "spotify.com") {
 			var song SpotifySong
 			song, err = getSpotifyLinkName(link)
 			if err != nil {
@@ -100,8 +104,6 @@ func (b *Bot) onPlay(s *discordgo.Session, i *discordgo.InteractionCreate) {
 			}
 
 			songlink, err = getLinkTitle(song.Name+" "+song.Artist[0].Name+" lyrics", b.ytToken, s, i)
-		} else {
-			songlink = link
 		}
 
 		if err != nil {
@@ -111,8 +113,6 @@ func (b *Bot) onPlay(s *discordgo.Session, i *discordgo.InteractionCreate) {
 			return
 		}
 
-		link = songlink
-
 	case 11: //attachment
 		attachmentID := i.ApplicationCommandData().Options[0].Value.(string)
 		file := i.ApplicationCommandData().Resolved.Attachments[attachmentID]
@@ -121,6 +121,14 @@ func (b *Bot) onPlay(s *discordgo.Session, i *discordgo.InteractionCreate) {
 		attachment = true
 	}
 
+	if attachment {
+		b.playMusic(s, i, link, attachment, title)
+	}
+	//make a list with top 10 songs from search
+
+}
+
+func (b *Bot) playMusic(s *discordgo.Session, i *discordgo.InteractionCreate, link string, attachment bool, attachmentTitle string) {
 	songCh := make(chan YTDLPResponse)
 	errCh := make(chan error)
 	wg.Wait()
@@ -141,7 +149,7 @@ func (b *Bot) onPlay(s *discordgo.Session, i *discordgo.InteractionCreate) {
 	}
 
 	if attachment {
-		song.Title = title
+		song.Title = attachmentTitle
 	}
 
 	if b.IsPlaying() {
@@ -361,33 +369,32 @@ func editInteraction(s *discordgo.Session, i *discordgo.InteractionCreate, msg s
 	})
 }
 
-func getLinkTitle(link string, token string, s *discordgo.Session, i *discordgo.InteractionCreate) (ytlink string, err error) {
-	searchURL := "https://www.googleapis.com/youtube/v3/search?part=snippet&maxResults=1&q=" + url.QueryEscape(link) + "&type=video&key=" + token
+func getLinkTitle(link string, token string, s *discordgo.Session, i *discordgo.InteractionCreate) (queryRes YTResponse, err error) {
+	searchURL := "https://www.googleapis.com/youtube/v3/search?part=snippet&maxResults=6&q=" + url.QueryEscape(link) + "&type=video&key=" + token
 	res, err := http.DefaultClient.Get(searchURL)
 	if err != nil {
 		log.Printf("couldnt make the search request: %s\n", err)
-		return "", err
+		return YTResponse{}, err
 	}
 	resBody, err := io.ReadAll(res.Body)
 	if err != nil {
 		log.Printf("could not read response body: %s\n", err)
-		return "", err
+		return YTResponse{}, err
 	}
 	var response YTResponse
 	err = json.Unmarshal([]byte(resBody), &response)
 	if err != nil {
 		log.Printf("could not parse response: %s.\n body: %s\n request: %s\n", err, resBody, searchURL)
-		return "", err
+		return YTResponse{}, err
 	}
 	if len(response.Results) == 0 {
 		content := "Song not found"
 		s.InteractionResponseEdit(i.Interaction, &discordgo.WebhookEdit{
 			Content: &content,
 		})
-		return "", err
+		return YTResponse{}, err
 	}
-	ytlink = "https://youtube.com/watch?v=" + response.Results[0].ID.VideoID
-	return ytlink, nil
+	return response, nil
 }
 
 func findUserVoiceState(userid string, guild *discordgo.Guild) (*discordgo.VoiceState, error) {

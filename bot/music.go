@@ -149,7 +149,7 @@ func (b *Bot) startPlaying(s *discordgo.Session, song string, guildID string, ch
 
 	go func() {
 		defer func() {
-			if !repeat || len(Queue) < 1 {
+			if len(Queue) < 1 && !repeat {
 				Playing = false
 			}
 		}()

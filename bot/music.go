@@ -60,6 +60,24 @@ func encodeFile(song string) (ses *dca.EncodeSession, err error) {
 	return
 }
 
+func (b *Bot) GetUsersInVoice(chn *discordgo.Channel) int {
+	gd, err := b.s.Guild(chn.GuildID)
+
+	if err != nil {
+		log.Println("da fuq")
+		return 0
+	}
+
+	amount := 0
+
+	for _, h := range gd.VoiceStates {
+		if h.ChannelID == chn.ID {
+			amount += 1
+		}
+	}
+	return amount
+}
+
 func (b *Bot) HandleVoiceStateUpdate(s *discordgo.Session, i *discordgo.VoiceStateUpdate) {
 	if _, ok := Timers.Load(CurrentBotChannel); ok {
 		return
@@ -83,7 +101,7 @@ func (b *Bot) HandleVoiceStateUpdate(s *discordgo.Session, i *discordgo.VoiceSta
 	go func() {
 		msg := "left cuz afk"
 		for timer > 1 {
-			if shit.MemberCount < 2 {
+			if b.GetUsersInVoice(shit) < 2 {
 				msg = "everyone left"
 				break
 			}

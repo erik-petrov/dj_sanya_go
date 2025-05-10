@@ -61,11 +61,11 @@ func encodeFile(song string) (ses *dca.EncodeSession, err error) {
 }
 
 func (b *Bot) GetUsersInVoice(chn *discordgo.Channel) int {
-	gd, err := b.s.Guild(chn.GuildID)
+	gd, err := b.s.State.Guild(chn.GuildID)
 
 	if err != nil {
-		log.Println("da fuq")
-		return 0
+		log.Println(err)
+		return -1
 	}
 
 	amount := 0
@@ -92,6 +92,8 @@ func (b *Bot) HandleVoiceStateUpdate(s *discordgo.Session, i *discordgo.VoiceSta
 	Timers.Store(CurrentBotChannel, timer)
 
 	shit, err := s.Channel(CurrentVoiceConnection.ChannelID)
+
+	log.Println(b.GetUsersInVoice(shit))
 
 	if err != nil {
 		log.Print("wtf")

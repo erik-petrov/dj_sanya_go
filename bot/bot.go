@@ -66,6 +66,11 @@ func (b *Bot) sirusParsing() {
 	}()
 }
 
+func (b *Bot) debug(s *discordgo.Session, i *discordgo.InteractionCreate) {
+	var ch, _ = b.s.Channel(CurrentBotChannel)
+	log.Println(b.GetUsersInVoice(ch))
+}
+
 func (b *Bot) setupCommands() {
 	commands := []*discordgo.ApplicationCommand{
 		{
@@ -115,6 +120,10 @@ func (b *Bot) setupCommands() {
 				},
 			},
 		},
+		{
+			Name:        "debug",
+			Description: "whatever i need to debug rn",
+		},
 	}
 
 	commandHandlers := map[string]func(s *discordgo.Session, i *discordgo.InteractionCreate){
@@ -129,6 +138,8 @@ func (b *Bot) setupCommands() {
 		"skip": b.onSkip,
 
 		"wakeup": b.wakeUp,
+
+		"debug": b.debug,
 	}
 
 	b.s.AddHandler(b.HandleVoiceStateUpdate)

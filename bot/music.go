@@ -117,6 +117,7 @@ func (b *Bot) HandleVoiceStateUpdate(s *discordgo.Session, i *discordgo.VoiceSta
 		}
 		CurrentVoiceConnection.Disconnect()
 		CurrentVoiceConnection = nil
+		Playing = false
 		chnl, err := s.Channel(CurrentBotChannel)
 
 		if err != nil {

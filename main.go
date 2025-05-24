@@ -15,7 +15,11 @@ var (
 )
 
 func main() {
-	godotenv.Load()
+	err := godotenv.Load()
+	if err != nil {
+		log.Println("Error loading .env file")
+		return
+	}
 
 	token := os.Getenv("BOT_TOKEN")
 
@@ -24,11 +28,11 @@ func main() {
 	}
 
 	boot := bot.Boot{
-		GuildID:   GuildID,
-		Token:     os.Getenv("BOT_TOKEN"),
-		YT_Token:  os.Getenv("YT_TOKEN"),
-		SF_Token:  os.Getenv("SPOTIFY_ID"),
-		SF_Secret: os.Getenv("SPOTIFY_SECRET"),
+		GuildID:  GuildID,
+		Token:    os.Getenv("BOT_TOKEN"),
+		YtToken:  os.Getenv("YT_TOKEN"),
+		SfToken:  os.Getenv("SPOTIFY_ID"),
+		SfSecret: os.Getenv("SPOTIFY_SECRET"),
 	}
 
 	bot, err := bot.New(boot)

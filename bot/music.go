@@ -19,7 +19,7 @@ import (
 var (
 	AfkTime                = 600
 	MusicStream            *stream.StreamingSession
-	ErrBotStandy           = errors.New("Bot is on standy")
+	ErrBotStandy           = errors.New("bot is on standy")
 	Playing                = false
 	Queue                  = make([]YTDLPResponse, 0)
 	CurrentVoiceConnection *discordgo.VoiceConnection
@@ -125,7 +125,10 @@ func (b *Bot) HandleVoiceStateUpdate(s *discordgo.Session, i *discordgo.VoiceSta
 			return
 		}
 
-		s.ChannelMessageSend(chnl.ID, msg)
+		_, err = s.ChannelMessageSend(chnl.ID, msg)
+		if err != nil {
+			return
+		}
 		Timers.Delete(CurrentBotChannel)
 	}()
 }
@@ -146,7 +149,10 @@ func (b *Bot) startPlaying(s *discordgo.Session, song string, guildID string, ch
 	}
 
 	// Start speaking.
-	vc.Speaking(true)
+	err = vc.Speaking(true)
+	if err != nil {
+		return err
+	}
 
 	done := make(chan error, 10)
 
@@ -159,36 +165,46 @@ func (b *Bot) startPlaying(s *discordgo.Session, song string, guildID string, ch
 	stre.Start()
 
 	MusicStream = stre
-	if err != nil {
-		return err
-	}
 	Playing = true
 	starting = false
 
-	defer vc.Speaking(false)
+	defer func(vc *discordgo.VoiceConnection, b bool) {
+		err := vc.Speaking(b)
+		if err != nil {
+			log.Println("error speaking")
+		}
+	}(vc, false)
 	defer ses.Cleanup()
 
 	go func() {
 		defer func() {
 			if len(Queue) < 1 && !repeat {
 				Playing = false
+				clear(Queue)
 			}
+			log.Println("i ended fine")
 		}()
 		for {
 			if !vc.Ready {
 				return
 			}
 
+			if !Playing {
+				return
+			}
+
 			err := <-done
-			if errors.Is(err, stream.ErrStopped) {
+			if errors.Is(err, stream.ErrStopped) || (errors.Is(err, stream.ErrStreamIsDone) && !repeat) {
 				return
 			}
 
 			if repeat {
-				b.startPlaying(s, song, guildID, channelID)
-			}
-
-			if len(Queue) >= 1 && (errors.Is(err, io.EOF) || errors.Is(err, stream.ErrStreamIsDone)) {
+				err := b.startPlaying(s, song, guildID, channelID)
+				if err != nil {
+					log.Println("error starting playing", err)
+				}
+				return
+			} else if len(Queue) >= 1 && (errors.Is(err, io.EOF) || errors.Is(err, stream.ErrStreamIsDone)) {
 				toPlay := Queue[0]
 				Queue = Queue[1:]
 				linkToPlay := ""
@@ -202,14 +218,15 @@ func (b *Bot) startPlaying(s *discordgo.Session, song string, guildID string, ch
 					log.Println("error downloading music: ", err.Error())
 					return
 				}
-				b.startPlaying(s, linkToPlay, guildID, channelID)
+				err = b.startPlaying(s, linkToPlay, guildID, channelID)
+				if err != nil {
+					log.Println("error starting playing: ", err.Error())
+				}
+			} else {
+				break
 			}
 
-			if !Playing {
-				return
-			}
-
-			if !errors.Is(err, stream.ErrStreamIsDone) && !(errors.Is(err, io.EOF) && repeat) {
+			if !errors.Is(err, stream.ErrStreamIsDone) && !errors.Is(err, io.EOF) {
 				log.Println("stream error: ", err.Error())
 				return
 			}
@@ -220,13 +237,10 @@ func (b *Bot) startPlaying(s *discordgo.Session, song string, guildID string, ch
 	err = <-done
 
 	//errors that arent bad
-	if err == io.EOF || err == stream.ErrSkipped || err == stream.ErrStopped {
+	if err == io.EOF || errors.Is(err, stream.ErrSkipped) || errors.Is(err, stream.ErrStopped) {
 		return nil
 	}
 
-	//bad
-	Playing = false
-	repeat = false
 	return err
 }
 
@@ -263,12 +277,12 @@ func (b *Bot) getMetadata(ytlink string) (link YTDLPResponse, err error) {
 		err = nil
 	}
 	if err != nil {
-		log.Fatal("error with yt-dlp finder: ", err)
+		log.Println("error with yt-dlp finder: ", err)
 		return YTDLPResponse{}, err
 	}
 
 	if path == "" {
-		log.Fatal("yt-dlp not installed")
+		log.Println("yt-dlp not installed")
 		return YTDLPResponse{}, errors.New("yt-dlp missing")
 	}
 
@@ -340,11 +354,11 @@ func (b *Bot) downloadVideo(link string) (string, error) {
 		err = nil
 	}
 	if err != nil {
-		log.Fatal(err)
+		log.Println("following error while loading ffmpeg:", err)
 	}
 
 	if path == "" {
-		log.Fatal("ffmpeg not installed")
+		log.Println("ffmpeg not installed")
 		return "", errors.New("ffmpeg missing")
 	}
 

@@ -17,16 +17,16 @@ type Bot struct {
 }
 
 type Boot struct {
-	GuildID   string
-	Token     string
-	YT_Token  string
-	SF_Token  string
-	SF_Secret string
+	GuildID  string
+	Token    string
+	YtToken  string
+	SfToken  string
+	SfSecret string
 }
 
 func New(boot Boot) (*Bot, error) {
 	s, err := discordgo.New("Bot " + boot.Token)
-	return &Bot{s: s, guildID: boot.GuildID, ytToken: boot.YT_Token, sfToken: boot.SF_Token, sfSecret: boot.SF_Secret}, err
+	return &Bot{s: s, guildID: boot.GuildID, ytToken: boot.YtToken, sfToken: boot.SfToken, sfSecret: boot.SfSecret}, err
 }
 
 func (b *Bot) Start() error {
@@ -37,7 +37,11 @@ func (b *Bot) Start() error {
 }
 
 func (b *Bot) Close() {
-	b.s.Close()
+	err := b.s.Close()
+	if err != nil {
+		log.Println("Error closing Discord session:", err)
+		return
+	}
 }
 
 func (b *Bot) sirusParsing() {

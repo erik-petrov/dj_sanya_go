@@ -181,7 +181,6 @@ func (b *Bot) onPlay(s *discordgo.Session, i *discordgo.InteractionCreate) {
 			if len(song.RequestedDownloads[0].RequestedFormats) == 0 {
 				rawURL = song.FallbackURL
 			} else {
-				log.Println(song.RequestedDownloads)
 				rawURL = song.RequestedDownloads[0].RequestedFormats[1].URL
 			}
 

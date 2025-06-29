@@ -207,7 +207,6 @@ func (b *Bot) startPlaying(s *discordgo.Session, song string, guildID string, ch
 			}
 
 			err := <-done
-			log.Println(err.Error())
 			if errors.Is(err, io.EOF) || errors.Is(err, stream.ErrStopped) || (errors.Is(err, stream.ErrStreamIsDone) && !repeat && len(Queue) < 1) {
 				return
 			}

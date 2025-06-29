@@ -15,6 +15,7 @@ var (
 )
 
 func main() {
+	log.SetFlags(log.LstdFlags | log.Lshortfile)
 	err := godotenv.Load()
 	if err != nil {
 		log.Println("Error loading .env file")

@@ -61,7 +61,38 @@ type SpotifySong struct {
 	Album  Album    `json:"album"`
 }
 
+func castYTDLPResponse(data interface{}) (interface{}, error) {
+	// Marshal the interface{} back to JSON
+	jsonBytes, err := json.Marshal(data)
+	if err != nil {
+		return nil, err
+	}
+
+	// Unmarshal into a map to inspect structure
+	var raw map[string]interface{}
+	if err := json.Unmarshal(jsonBytes, &raw); err != nil {
+		return nil, err
+	}
+
+	// Check for the "entries" field to determine if it's a playlist
+	if _, ok := raw["entries"]; ok {
+		var playlist YTDLPResponsePlaylist
+		if err := json.Unmarshal(jsonBytes, &playlist); err != nil {
+			return nil, err
+		}
+		return playlist, nil
+	}
+
+	// Otherwise, assume it's a single video
+	var single YTDLPResponse
+	if err := json.Unmarshal(jsonBytes, &single); err != nil {
+		return nil, err
+	}
+	return single, nil
+}
+
 func (b *Bot) onPlay(s *discordgo.Session, i *discordgo.InteractionCreate) {
+	var isPlaylist bool
 	CurrentBotChannel = i.ChannelID
 
 	s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
@@ -74,6 +105,7 @@ func (b *Bot) onPlay(s *discordgo.Session, i *discordgo.InteractionCreate) {
 	title := ""
 	link := ""
 	attachment := false
+	
 	if len(i.ApplicationCommandData().Options) == 0 {
 		s.FollowupMessageCreate(i.Interaction, true, &discordgo.WebhookParams{
 			Content: "No music data given",
@@ -96,11 +128,15 @@ func (b *Bot) onPlay(s *discordgo.Session, i *discordgo.InteractionCreate) {
 				s.FollowupMessageCreate(i.Interaction, true, &discordgo.WebhookParams{
 					Content: "Something went wrong: " + err.Error(),
 				})
+				log.Println(err.Error())
 				return
 			}
 
 			songlink, err = getLinkTitle(song.Name+" "+song.Artist[0].Name+" lyrics", b.ytToken, s, i)
 		} else {
+			if checkSubstrings(link, "&list=") {
+				isPlaylist = true
+			}
 			songlink = link
 		}
 
@@ -108,6 +144,7 @@ func (b *Bot) onPlay(s *discordgo.Session, i *discordgo.InteractionCreate) {
 			s.FollowupMessageCreate(i.Interaction, true, &discordgo.WebhookParams{
 				Content: "Something went wrong: " + err.Error(),
 			})
+			log.Println(err.Error())
 			return
 		}
 
@@ -121,13 +158,13 @@ func (b *Bot) onPlay(s *discordgo.Session, i *discordgo.InteractionCreate) {
 		attachment = true
 	}
 
-	songCh := make(chan YTDLPResponse)
+	songCh := make(chan interface{})
 	errCh := make(chan error)
 	wg.Wait()
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
-		b.playSong(link, attachment, songCh, errCh)
+		b.playSong(link, attachment, songCh, errCh, isPlaylist)
 	}()
 
 	song := <-songCh
@@ -137,33 +174,86 @@ func (b *Bot) onPlay(s *discordgo.Session, i *discordgo.InteractionCreate) {
 		s.FollowupMessageCreate(i.Interaction, true, &discordgo.WebhookParams{
 			Content: "Something went wrong: " + err.Error(),
 		})
+		log.Println(err.Error())
 		return
 	}
 
-	if attachment {
-		song.Title = title
-	}
-
-	if b.IsPlaying() {
-		b.AddToQueue(song)
-		editInteraction(s, i, "Added `"+song.Title+"` to queue!")
-		return
+	song, err = castYTDLPResponse(song)
+	if err != nil {
+		log.Println("Something went wrong during casting: " + err.Error())
+		s.FollowupMessageCreate(i.Interaction, true, &discordgo.WebhookParams{
+			Content: "Something went wrong during casting: " + err.Error(),
+		})
 	}
 
 	content := ""
-	if !attachment {
-		content = "Играю: `" + song.Title + "`\nДлительностью " + song.Duration
-	} else {
-		content = "Играю: `" + song.Title + "`"
+	switch song.(type) {
+	case YTDLPResponse:
+		if attachment {
+			bar, ok := song.(YTDLPResponse)
+			if ok {
+				bar.Title = title
+			}
+			content = "Играю: `" + bar.Title + "`"
+		} else {
+			bar, ok := song.(YTDLPResponse)
+			if !ok {
+				s.FollowupMessageCreate(i.Interaction, true, &discordgo.WebhookParams{
+					Content: "Something went wrong: " + "type assertion failed",
+				})
+				return
+			}
+
+			if b.IsPlaying() {
+				b.AddToQueue(bar)
+				editInteraction(s, i, "Added `"+bar.Title+"` to queue!")
+				return
+			}
+
+			content = "Играю: `" + bar.Title + "`\nДлительностью " + bar.Duration
+			song = bar
+		}
+	case YTDLPResponsePlaylist:
+		bar, ok := song.(YTDLPResponsePlaylist)
+
+		if !ok {
+			s.FollowupMessageCreate(i.Interaction, true, &discordgo.WebhookParams{
+				Content: "Something went wrong: " + "type assertion failed",
+			})
+			return
+		}
+
+		if b.IsPlaying() { //add instantly everything to queue
+			for _, el := range bar.Entries {
+				b.AddToQueue(el)
+			}
+			content = "Добавил плейлист в очередь"
+		} else {
+			toPlay := bar.Entries[0]
+			for i := 1; i < len(bar.Entries); i++ {
+				b.AddToQueue(bar.Entries[i])
+			}
+			content = "Играю: `" + toPlay.Title + "`\nДлительностью " + toPlay.Duration
+			song = toPlay
+		}
+	default:
+		log.Println("Something went wrong with type assertion")
+		err = errors.New("something went wrong with type assertion")
 	}
 
 	_, err = s.InteractionResponseEdit(i.Interaction, &discordgo.WebhookEdit{
 		Content: &content,
 	})
+
 	if err != nil {
 		s.FollowupMessageCreate(i.Interaction, true, &discordgo.WebhookParams{
 			Content: "Something went wrong: " + err.Error(),
 		})
+		log.Println(err.Error())
+		return
+	}
+
+	if b.IsPlaying() {
 		return
 	}
 
@@ -176,26 +266,40 @@ func (b *Bot) onPlay(s *discordgo.Session, i *discordgo.InteractionCreate) {
 
 	for _, vs := range g.VoiceStates {
 		if vs.UserID == i.Member.User.ID {
-			rawURL := ""
+			var songOk YTDLPResponse
+			var ok bool
+			if songOk, ok = song.(YTDLPResponse); ok {
+				rawURL := ""
 
-			if len(song.RequestedDownloads[0].RequestedFormats) == 0 {
-				rawURL = song.FallbackURL
+				if len(songOk.RequestedDownloads[0].RequestedFormats) == 0 {
+					rawURL = songOk.FallbackURL
+				} else {
+					rawURL = songOk.RequestedDownloads[0].RequestedFormats[1].URL
+				}
+
+				rawURL, err := b.downloadVideo(rawURL)
+				if err != nil {
+					log.Println("Error downloading sound:", err)
+					s.FollowupMessageCreate(i.Interaction, true, &discordgo.WebhookParams{
+						Content: "Something went wrong: " + err.Error(),
+					})
+					return
+				}
+
+				err = b.startPlaying(s, rawURL, g.ID, vs.ChannelID)
+				if err != nil {
+					log.Println("Error playing sound:", err)
+					s.FollowupMessageCreate(i.Interaction, true, &discordgo.WebhookParams{
+						Content: "Something went wrong: " + err.Error(),
+					})
+					return
+				}
 			} else {
-				rawURL = song.RequestedDownloads[0].RequestedFormats[1].URL
-			}
-
-			rawURL, err := b.downloadVideo(rawURL)
-			if err != nil {
-				log.Println("Error downloading sound:", err)
+				s.FollowupMessageCreate(i.Interaction, true, &discordgo.WebhookParams{
+					Content: "Something went wrong: " + "type assertion failed when playing",
+				})
 				return
 			}
-
-			err = b.startPlaying(s, rawURL, g.ID, vs.ChannelID)
-			if err != nil {
-				log.Println("Error playing sound:", err)
-			}
-
-			return
 		}
 	}
 }

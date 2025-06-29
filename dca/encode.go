@@ -507,7 +507,7 @@ func (e *EncodeSession) readStdout(stdout io.ReadCloser) {
 			continue
 		}
 		if err != nil {
-			if err != io.EOF {
+			if !errors.Is(err, io.EOF) || !errors.Is(err, io.ErrUnexpectedEOF) {
 				logln("Error reading ffmpeg stdout:", err)
 			}
 			break
@@ -548,7 +548,7 @@ func (e *EncodeSession) Stop() error {
 	e.Lock()
 	defer e.Unlock()
 	if !e.running || e.process == nil {
-		return errors.New("Not running")
+		return errors.New("not running")
 	}
 
 	err := e.process.Kill()

@@ -26,6 +26,11 @@ var (
 	Timers                 sync.Map
 )
 
+type YTDLPResponsePlaylist struct {
+	Title   string          `json:"title"`
+	Entries []YTDLPResponse `json:"entries"`
+}
+
 type YTDLPResponse struct {
 	Title              string               `json:"title"`
 	WebpageURL         string               `json:"website_url"`
@@ -115,9 +120,13 @@ func (b *Bot) HandleVoiceStateUpdate(s *discordgo.Session, i *discordgo.VoiceSta
 			time.Sleep(1 * time.Second)
 			timer -= 1
 		}
-		CurrentVoiceConnection.Disconnect()
-		CurrentVoiceConnection = nil
 		Playing = false
+		err := CurrentVoiceConnection.Disconnect()
+		if err != nil {
+			log.Print("couldnt disconnect")
+			return
+		}
+		CurrentVoiceConnection = nil
 		chnl, err := s.Channel(CurrentBotChannel)
 
 		if err != nil {
@@ -134,33 +143,38 @@ func (b *Bot) HandleVoiceStateUpdate(s *discordgo.Session, i *discordgo.VoiceSta
 }
 
 func (b *Bot) startPlaying(s *discordgo.Session, song string, guildID string, channelID string) (err error) {
-	for starting {
-		if !starting {
-			break
+	log.Println("current queue: ", Queue)
+	var vc *discordgo.VoiceConnection
+	if !Playing {
+		for starting {
+			if !starting {
+				break
+			}
+			time.Sleep(10 * time.Second)
 		}
-		time.Sleep(10 * time.Second)
-	}
-	starting = true
-	// Join the provided voice channel.
-	vc, err := s.ChannelVoiceJoin(guildID, channelID, false, true)
-	CurrentVoiceConnection = vc
-	if err != nil {
-		return err
-	}
+		starting = true
+		// Join the provided voice channel.
+		vc, err = s.ChannelVoiceJoin(guildID, channelID, false, true)
+		CurrentVoiceConnection = vc
+		if err != nil {
+			return err
+		}
 
-	// Start speaking.
-	err = vc.Speaking(true)
-	if err != nil {
-		return err
+		// Start speaking.
+		err = vc.Speaking(true)
+		if err != nil {
+			return err
+		}
+	} else {
+		vc = CurrentVoiceConnection
 	}
-
-	done := make(chan error, 10)
 
 	ses, err := encodeFile(song)
 	if err != nil {
 		return err
 	}
 
+	done := make(chan error, 10)
 	stre := stream.NewStream(ses, vc, done)
 	stre.Start()
 
@@ -169,21 +183,20 @@ func (b *Bot) startPlaying(s *discordgo.Session, song string, guildID string, ch
 	starting = false
 
 	defer func(vc *discordgo.VoiceConnection, b bool) {
-		err := vc.Speaking(b)
-		if err != nil {
-			log.Println("error speaking")
+		if len(Queue) < 1 && !repeat {
+			err := vc.Speaking(b)
+			if err != nil {
+				log.Println("error speaking ", err)
+			}
+
+			Playing = false
+			clear(Queue)
+			log.Println("i ended fine")
 		}
 	}(vc, false)
 	defer ses.Cleanup()
 
 	go func() {
-		defer func() {
-			if len(Queue) < 1 && !repeat {
-				Playing = false
-				clear(Queue)
-			}
-			log.Println("i ended fine")
-		}()
 		for {
 			if !vc.Ready {
 				return
@@ -194,7 +207,8 @@ func (b *Bot) startPlaying(s *discordgo.Session, song string, guildID string, ch
 			}
 
 			err := <-done
-			if errors.Is(err, stream.ErrStopped) || (errors.Is(err, stream.ErrStreamIsDone) && !repeat) {
+			log.Println(err.Error())
+			if errors.Is(err, io.EOF) || errors.Is(err, stream.ErrStopped) || (errors.Is(err, stream.ErrStreamIsDone) && !repeat && len(Queue) < 1) {
 				return
 			}
 
@@ -204,7 +218,7 @@ func (b *Bot) startPlaying(s *discordgo.Session, song string, guildID string, ch
 					log.Println("error starting playing", err)
 				}
 				return
-			} else if len(Queue) >= 1 && (errors.Is(err, io.EOF) || errors.Is(err, stream.ErrStreamIsDone)) {
+			} else if len(Queue) >= 1 && (errors.Is(err, io.EOF) || errors.Is(err, stream.ErrStreamIsDone) || err == nil) {
 				toPlay := Queue[0]
 				Queue = Queue[1:]
 				linkToPlay := ""
@@ -244,7 +258,7 @@ func (b *Bot) startPlaying(s *discordgo.Session, song string, guildID string, ch
 	return err
 }
 
-func (b *Bot) playSong(link string, attachment bool, songCh chan<- YTDLPResponse, errCh chan<- error) {
+func (b *Bot) playSong(link string, attachment bool, songCh chan<- interface{}, errCh chan<- error, isPlaylist bool) {
 	if attachment {
 		songCh <- YTDLPResponse{
 			WebpageURL:         link,
@@ -252,15 +266,16 @@ func (b *Bot) playSong(link string, attachment bool, songCh chan<- YTDLPResponse
 		}
 		errCh <- nil
 		return
+	} else {
+		resp, err := b.getMetadata(link)
+		if err != nil {
+			log.Println("error getting metadata", err)
+			errCh <- err
+			return
+		}
+		songCh <- resp
+		errCh <- nil
 	}
-	resp, err := b.getMetadata(link)
-	if err != nil {
-		songCh <- YTDLPResponse{}
-		errCh <- err
-		return
-	}
-	songCh <- resp
-	errCh <- nil
 }
 
 func (b *Bot) IsPlaying() bool {
@@ -271,7 +286,7 @@ func (b *Bot) AddToQueue(song YTDLPResponse) {
 	Queue = append(Queue, song)
 }
 
-func (b *Bot) getMetadata(ytlink string) (link YTDLPResponse, err error) {
+func (b *Bot) getMetadata(ytlink string) (link interface{}, err error) {
 	path, err := exec.LookPath("yt-dlp")
 	if errors.Is(err, exec.ErrDot) {
 		err = nil

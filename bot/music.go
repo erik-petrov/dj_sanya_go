@@ -285,6 +285,10 @@ func (b *Bot) AddToQueue(song YTDLPResponse) {
 	Queue = append(Queue, song)
 }
 
+func (b *Bot) GetQueue() []YTDLPResponse {
+	return Queue
+}
+
 func (b *Bot) getMetadata(ytlink string) (link interface{}, err error) {
 	path, err := exec.LookPath("yt-dlp")
 	if errors.Is(err, exec.ErrDot) {

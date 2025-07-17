@@ -3,6 +3,7 @@ package bot
 import (
 	"fmt"
 	"log"
+	"strconv"
 	"time"
 
 	"github.com/bwmarrin/discordgo"
@@ -75,6 +76,23 @@ func (b *Bot) debug(s *discordgo.Session, i *discordgo.InteractionCreate) {
 	log.Println(b.GetUsersInVoice(ch))
 }
 
+func (b *Bot) queue(s *discordgo.Session, i *discordgo.InteractionCreate) {
+	var response string
+
+	q := b.GetQueue()
+
+	for i, ytdlpResponse := range q {
+		response += strconv.Itoa(i) + ": [" + ytdlpResponse.Title + "](" + ytdlpResponse.WebpageURL + ")\n"
+	}
+
+	s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
+		Type: discordgo.InteractionResponseChannelMessageWithSource,
+		Data: &discordgo.InteractionResponseData{
+			Content: "Current queue: \n" + response,
+		},
+	})
+}
+
 func (b *Bot) setupCommands() {
 	commands := []*discordgo.ApplicationCommand{
 		{
@@ -128,6 +146,10 @@ func (b *Bot) setupCommands() {
 			Name:        "debug",
 			Description: "whatever i need to debug rn",
 		},
+		{
+			Name:        "queue",
+			Description: "Current queue",
+		},
 	}
 
 	commandHandlers := map[string]func(s *discordgo.Session, i *discordgo.InteractionCreate){
@@ -144,6 +166,8 @@ func (b *Bot) setupCommands() {
 		"wakeup": b.wakeUp,
 
 		"debug": b.debug,
+
+		"queue": b.queue,
 	}
 
 	b.s.AddHandler(b.HandleVoiceStateUpdate)

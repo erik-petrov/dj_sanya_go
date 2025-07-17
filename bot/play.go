@@ -98,14 +98,14 @@ func (b *Bot) onPlay(s *discordgo.Session, i *discordgo.InteractionCreate) {
 	s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
 		Type: discordgo.InteractionResponseChannelMessageWithSource,
 		Data: &discordgo.InteractionResponseData{
-			Content: "Loading..",
+			Content: "Loading...",
 		},
 	})
 
 	title := ""
 	link := ""
 	attachment := false
-	
+
 	if len(i.ApplicationCommandData().Options) == 0 {
 		s.FollowupMessageCreate(i.Interaction, true, &discordgo.WebhookParams{
 			Content: "No music data given",

@@ -10,7 +10,7 @@ RUN mkdir /usr/bin/yt-dlp
 ENV PATH="/usr/bin/yt-dlp:$PATH"
 ADD https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp /usr/bin/yt-dlp
 RUN chmod a+rx /usr/bin/yt-dlp/yt-dlp
-COPY . .
+COPY . ./code
 RUN go mod download
 RUN mkdir temp_vids
 CMD ["go", "run", "main.go"]

@@ -201,26 +201,24 @@ func (e *EncodeSession) run() {
 
 	// Launch ffmpeg with a variety of different fruits and goodies mixed togheter
 	args := []string{
-		/*"-stats",
+		"-stats",
 		"-reconnect", "1",
 		"-reconnect_at_eof", "1",
 		"-reconnect_streamed", "1",
-		"-reconnect_delay_max", "2",*/
+		"-reconnect_delay_max", "2",
 		"-i", inFile,
 		"-map", "0:a",
 		"-acodec", "libopus",
 		"-f", "ogg",
-		//"-vbr", vbrStr,
-		//"-compression_level", strconv.Itoa(e.options.CompressionLevel),
+		"-vbr", "on",
+		"-compression_level", strconv.Itoa(e.options.CompressionLevel),
 		//"-vol", strconv.Itoa(e.options.Volume),
-		/*"-ar", strconv.Itoa(e.options.FrameRate),
-		"-ac", strconv.Itoa(e.options.Channels),
+		"-ac", "2",
 		"-b:a", strconv.Itoa(e.options.Bitrate * 1000),
-		"-application", string(e.options.Application),
+		"-application", "audio",
 		"-frame_duration", strconv.Itoa(e.options.FrameDuration),
 		"-packet_loss", strconv.Itoa(e.options.PacketLoss),
 		"-threads", strconv.Itoa(e.options.Threads),
-		"-ss", strconv.Itoa(e.options.StartTime),*/
 	}
 
 	if e.options.AudioFilter != "" {
@@ -231,8 +229,6 @@ func (e *EncodeSession) run() {
 	args = append(args, "pipe:1")
 
 	ffmpeg := exec.Command("ffmpeg", args...)
-
-	// logln(ffmpeg.Args)
 
 	if e.pipeReader != nil {
 		ffmpeg.Stdin = e.pipeReader
@@ -507,7 +503,7 @@ func (e *EncodeSession) readStdout(stdout io.ReadCloser) {
 			continue
 		}
 		if err != nil {
-			if !errors.Is(err, io.EOF) || !errors.Is(err, io.ErrUnexpectedEOF) {
+			if !errors.Is(err, io.EOF) && !errors.Is(err, io.ErrUnexpectedEOF) {
 				logln("Error reading ffmpeg stdout:", err)
 			}
 			break

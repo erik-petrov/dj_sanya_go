@@ -73,6 +73,10 @@ func (s *StreamingSession) stream() error {
 		s.running = false
 	}()
 
+	// Pace outgoing frames to real time based on the source frame duration
+	pacer := time.NewTicker(s.source.FrameDuration())
+	defer pacer.Stop()
+
 	for {
 
 		if s.paused {
@@ -94,6 +98,8 @@ func (s *StreamingSession) stream() error {
 		}
 
 		s.Unlock()
+		// Wait for the next frame tick to ensure real-time pacing
+		<-pacer.C
 		err := s.readNext()
 		s.Lock()
 		if err != nil {

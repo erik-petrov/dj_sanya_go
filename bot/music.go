@@ -384,6 +384,8 @@ func (b *Bot) downloadVideo(link string) (string, error) {
 		"-i", link,
 		"-map", "0:a",
 		"-acodec", "libopus",
+		"-ar", "48000",
+		"-ac", "2",
 		"-f", "ogg",
 		"-y",
 		filePath,

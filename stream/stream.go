@@ -115,6 +115,7 @@ func (s *StreamingSession) stream() error {
 }
 
 func (s *StreamingSession) readNext() error {
+	frameStart := time.Now()
 	opus, err := s.source.OpusFrame()
 	if err != nil {
 		return err
@@ -134,6 +135,13 @@ func (s *StreamingSession) readNext() error {
 	s.Lock()
 	s.framesSent++
 	s.Unlock()
+
+	// Pace sending to Discord's expected frame rate
+	elapsed := time.Since(frameStart)
+	frameDur := s.source.FrameDuration()
+	if frameDur > 0 && elapsed < frameDur {
+		time.Sleep(frameDur - elapsed)
+	}
 
 	return nil
 }

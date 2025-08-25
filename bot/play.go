@@ -277,7 +277,7 @@ func (b *Bot) onPlay(s *discordgo.Session, i *discordgo.InteractionCreate) {
 					rawURL = songOk.RequestedDownloads[0].RequestedFormats[1].URL
 				}
 
-				rawURL, err := b.downloadVideo(rawURL)
+				rawURL, err = b.downloadVideo(rawURL)
 				if err != nil {
 					log.Println("Error downloading sound:", err)
 					s.FollowupMessageCreate(i.Interaction, true, &discordgo.WebhookParams{

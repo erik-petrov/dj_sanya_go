@@ -228,6 +228,17 @@ func (e *EncodeSession) run() {
 		args = append(args, "-af", e.options.AudioFilter)
 	}
 
+	// Enforce Discord-friendly opus parameters
+	// If these flags are already present in args, ffmpeg will use the latter occurrence
+	args = append(args,
+		"-vbr", "on",
+		"-compression_level", strconv.Itoa(e.options.CompressionLevel),
+		"-ar", strconv.Itoa(e.options.FrameRate),
+		"-ac", strconv.Itoa(e.options.Channels),
+		"-b:a", strconv.Itoa(e.options.Bitrate*1000),
+		"-application", string(e.options.Application),
+	)
+
 	args = append(args, "pipe:1")
 
 	ffmpeg := exec.Command("ffmpeg", args...)

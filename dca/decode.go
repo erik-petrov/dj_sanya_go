@@ -107,7 +107,7 @@ func (d *Decoder) OpusFrame() (frame []byte, err error) {
 // FrameDuration implements OpusReader, returnining the specified duration per frame
 func (d *Decoder) FrameDuration() time.Duration {
 	if d.Metadata == nil {
-		return 20
+		return 20 * time.Millisecond
 	}
 
 	// I don't understand nick, why does it have to be like this nick, please nick, im not having a good time nick.

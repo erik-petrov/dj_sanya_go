@@ -32,7 +32,7 @@ type YTResponse struct {
 		} `json:"id"`
 
 		Snippet struct {
-			Title string `jsin:"title"`
+			Title string `json:"title"`
 		}
 	} `json:"items"`
 }

@@ -92,7 +92,6 @@ func castYTDLPResponse(data interface{}) (interface{}, error) {
 }
 
 func (b *Bot) onPlay(s *discordgo.Session, i *discordgo.InteractionCreate) {
-	var isPlaylist bool
 	CurrentBotChannel = i.ChannelID
 
 	s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
@@ -120,7 +119,8 @@ func (b *Bot) onPlay(s *discordgo.Session, i *discordgo.InteractionCreate) {
 		var songlink string
 
 		if !checkSubstrings(link, "youtu.be", "youtube", "soundcloud", "open.spotify", "spotify.com") {
-			songlink, err = getLinkTitle(link, b.ytToken, s, i)
+			//songlink, err = getLinkTitle(link, b.ytToken, s, i)
+			songlink = link
 		} else if checkSubstrings(link, "open.spotify", "spotify.com") {
 			var song SpotifySong
 			song, err = getSpotifyLinkName(link)
@@ -134,9 +134,6 @@ func (b *Bot) onPlay(s *discordgo.Session, i *discordgo.InteractionCreate) {
 
 			songlink, err = getLinkTitle(song.Name+" "+song.Artist[0].Name+" lyrics", b.ytToken, s, i)
 		} else {
-			if checkSubstrings(link, "&list=") {
-				isPlaylist = true
-			}
 			songlink = link
 		}
 
@@ -164,7 +161,7 @@ func (b *Bot) onPlay(s *discordgo.Session, i *discordgo.InteractionCreate) {
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
-		b.playSong(link, attachment, songCh, errCh, isPlaylist)
+		b.getSongData(link, attachment, songCh, errCh)
 	}()
 
 	song := <-songCh
@@ -277,16 +274,16 @@ func (b *Bot) onPlay(s *discordgo.Session, i *discordgo.InteractionCreate) {
 					rawURL = songOk.RequestedDownloads[0].RequestedFormats[1].URL
 				}
 
-				rawURL, err := b.downloadVideo(rawURL)
+				/*rawURL, err := b.downloadVideo(rawURL)
 				if err != nil {
 					log.Println("Error downloading sound:", err)
 					s.FollowupMessageCreate(i.Interaction, true, &discordgo.WebhookParams{
 						Content: "Something went wrong: " + err.Error(),
 					})
 					return
-				}
+				}*/
 
-				err = b.startPlaying(s, rawURL, g.ID, vs.ChannelID)
+				err = b.setupPlayer(s, rawURL, g.ID, vs.ChannelID)
 				if err != nil {
 					log.Println("Error playing sound:", err)
 					s.FollowupMessageCreate(i.Interaction, true, &discordgo.WebhookParams{

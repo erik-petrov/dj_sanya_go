@@ -20,6 +20,8 @@ var (
 	AfkTime                = 600
 	MusicStream            *stream.StreamingSession
 	ErrBotStandy           = errors.New("bot is on standy")
+	ErrVcNotReady          = errors.New("vc not ready")
+	ErrAlreadyRunning      = errors.New("already running")
 	Playing                = false
 	Queue                  = make([]YTDLPResponse, 0)
 	CurrentVoiceConnection *discordgo.VoiceConnection
@@ -54,7 +56,9 @@ var (
 
 func encodeFile(song string) (ses *dca.EncodeSession, err error) {
 	options := dca.StdEncodeOptions
-	options.RawOutput = false
+	options.BufferedFrames = 100
+	options.FrameDuration = 20
+	options.RawOutput = true
 	options.Bitrate = 96
 	options.Application = "lowdelay"
 
@@ -142,7 +146,7 @@ func (b *Bot) HandleVoiceStateUpdate(s *discordgo.Session, i *discordgo.VoiceSta
 	}()
 }
 
-func (b *Bot) startPlaying(s *discordgo.Session, song string, guildID string, channelID string) (err error) {
+func (b *Bot) setupPlayer(s *discordgo.Session, song string, guildID string, channelID string) (err error) {
 	log.Println("current queue: ", Queue)
 	var vc *discordgo.VoiceConnection
 	if !Playing {
@@ -150,7 +154,7 @@ func (b *Bot) startPlaying(s *discordgo.Session, song string, guildID string, ch
 			if !starting {
 				break
 			}
-			time.Sleep(10 * time.Second)
+			time.Sleep(2 * time.Second)
 		}
 		starting = true
 		// Join the provided voice channel.
@@ -169,19 +173,6 @@ func (b *Bot) startPlaying(s *discordgo.Session, song string, guildID string, ch
 		vc = CurrentVoiceConnection
 	}
 
-	ses, err := encodeFile(song)
-	if err != nil {
-		return err
-	}
-
-	done := make(chan error, 10)
-	stre := stream.NewStream(ses, vc, done)
-	stre.Start()
-
-	MusicStream = stre
-	Playing = true
-	starting = false
-
 	defer func(vc *discordgo.VoiceConnection, b bool) {
 		if len(Queue) < 1 && !repeat {
 			err := vc.Speaking(b)
@@ -194,70 +185,65 @@ func (b *Bot) startPlaying(s *discordgo.Session, song string, guildID string, ch
 			log.Println("i ended fine")
 		}
 	}(vc, false)
-	defer ses.Cleanup()
 
+	//setup done
+	starting = false
+	done := make(chan error, 1)
+	errCh := make(chan error, 1)
 	go func() {
 		for {
 			if !vc.Ready {
+				done <- ErrBotStandy
 				return
 			}
 
-			if !Playing {
+			if Playing && !repeat {
+				done <- ErrAlreadyRunning
 				return
 			}
 
-			err := <-done
-			if errors.Is(err, io.EOF) || errors.Is(err, stream.ErrStopped) || (errors.Is(err, stream.ErrStreamIsDone) && !repeat && len(Queue) < 1) {
-				return
-			}
+			go b.play(vc, song, done, errCh)
 
-			if repeat {
-				err := b.startPlaying(s, song, guildID, channelID)
-				if err != nil {
-					log.Println("error starting playing", err)
-				}
-				return
-			} else if len(Queue) >= 1 && (errors.Is(err, io.EOF) || errors.Is(err, stream.ErrStreamIsDone) || err == nil) {
-				toPlay := Queue[0]
-				Queue = Queue[1:]
-				linkToPlay := ""
-				if toPlay.FallbackURL != "" {
-					linkToPlay = toPlay.FallbackURL
-				} else {
-					linkToPlay = toPlay.RequestedDownloads[0].RequestedFormats[1].URL
-				}
-				linkToPlay, err := b.downloadVideo(linkToPlay)
-				if err != nil {
-					log.Println("error downloading music: ", err.Error())
-					return
-				}
-				err = b.startPlaying(s, linkToPlay, guildID, channelID)
-				if err != nil {
-					log.Println("error starting playing: ", err.Error())
-				}
-			} else {
+			<-done
+
+			if !repeat && len(Queue) < 1 {
 				break
 			}
 
-			if !errors.Is(err, stream.ErrStreamIsDone) && !errors.Is(err, io.EOF) {
-				log.Println("stream error: ", err.Error())
-				return
+			if repeat {
+				continue
 			}
-		}
 
+			toPlay := Queue[0]
+			Queue = Queue[1:]
+			if toPlay.FallbackURL != "" {
+				song = toPlay.FallbackURL
+			} else {
+				song = toPlay.RequestedDownloads[0].RequestedFormats[1].URL
+			}
+			//ended playing one of the songs
+			Playing = false
+		}
 	}()
 
-	err = <-done
-
-	//errors that arent bad
-	if err == io.EOF || errors.Is(err, stream.ErrSkipped) || errors.Is(err, stream.ErrStopped) {
-		return nil
-	}
-
-	return err
+	return <-done
 }
 
-func (b *Bot) playSong(link string, attachment bool, songCh chan<- interface{}, errCh chan<- error, isPlaylist bool) {
+func (b *Bot) play(vc *discordgo.VoiceConnection, song string, done chan error, errCh chan error) {
+	ses, err := encodeFile(song)
+	defer ses.Cleanup()
+	if err != nil {
+		errCh <- err
+		return
+	}
+
+	stre := stream.NewStream(ses, vc, done)
+
+	MusicStream = stre
+	Playing = true
+}
+
+func (b *Bot) getSongData(link string, attachment bool, songCh chan<- interface{}, errCh chan<- error) {
 	if attachment {
 		songCh <- YTDLPResponse{
 			WebpageURL:         link,
@@ -318,15 +304,16 @@ func (b *Bot) getMetadata(ytlink string) (link interface{}, err error) {
 	}
 
 	args := []string{
-		"--no-call-home",
 		"--no-cache-dir",
 		"--skip-download",
+		"--no-warnings",
 		"--force-ipv4",
 		"--restrict-filenames",
 		cookies, cookiepath,
 		// provide URL via stdin for security, youtube-dl has some run command args
-		"--batch-file", "-",
+		//"--batch-file", "-",
 		"-J", "-s",
+		"ytsearch: " + ytlink + " lyrics",
 	}
 
 	ffmpeg := exec.Command("yt-dlp", args...)
@@ -334,14 +321,16 @@ func (b *Bot) getMetadata(ytlink string) (link interface{}, err error) {
 	var oshibka bytes.Buffer
 	ffmpeg.Stderr = &oshibka
 
-	ffmpeg.Stdin = bytes.NewBufferString(ytlink + "\n")
+	//ffmpeg.Stdin = bytes.NewBufferString(ytlink + "\n")
 	stdout, err := ffmpeg.StdoutPipe()
 
 	if err != nil {
+		log.Println("error getting stdout", err)
 		return YTDLPResponse{}, err
 	}
 
 	if err := ffmpeg.Start(); err != nil {
+		log.Println("error starting ffmpeg ", err)
 		return YTDLPResponse{}, err
 	}
 

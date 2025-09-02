@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
+	"github.com/erik-petrov/dj_sanya_go/dgvoice"
 	"io"
 	"log"
 	"os"
@@ -26,6 +27,7 @@ var (
 	Queue                  = make([]YTDLPResponse, 0)
 	CurrentVoiceConnection *discordgo.VoiceConnection
 	Timers                 sync.Map
+	closeChan              chan bool
 )
 
 type YTDLPResponsePlaylist struct {
@@ -188,21 +190,28 @@ func (b *Bot) setupPlayer(s *discordgo.Session, song string, guildID string, cha
 
 	//setup done
 	starting = false
-	done := make(chan error, 1)
+	done := make(chan bool, 1)
+	closeCh := make(chan bool, 1)
 	errCh := make(chan error, 1)
+
 	go func() {
+		defer func() {
+			closeCh <- true
+			close(done)
+			close(errCh)
+		}()
 		for {
 			if !vc.Ready {
-				done <- ErrBotStandy
+				errCh <- ErrBotStandy
 				return
 			}
 
 			if Playing && !repeat {
-				done <- ErrAlreadyRunning
+				errCh <- ErrAlreadyRunning
 				return
 			}
 
-			go b.play(vc, song, done, errCh)
+			go b.play(vc, song, closeCh, done, errCh)
 
 			<-done
 
@@ -225,21 +234,21 @@ func (b *Bot) setupPlayer(s *discordgo.Session, song string, guildID string, cha
 			Playing = false
 		}
 	}()
-
-	return <-done
+	return nil
 }
 
-func (b *Bot) play(vc *discordgo.VoiceConnection, song string, done chan error, errCh chan error) {
-	ses, err := encodeFile(song)
-	defer ses.Cleanup()
-	if err != nil {
-		errCh <- err
-		return
-	}
+func (b *Bot) play(vc *discordgo.VoiceConnection, song string, done chan bool, close chan bool, errc chan error) {
+	//ses, err := encodeFile(song)
+	//defer ses.Cleanup()
+	//if err != nil {
+	//	errCh <- err
+	//	return
+	//}
 
-	stre := stream.NewStream(ses, vc, done)
+	//stre := stream.NewStream(ses, vc, done)
+	//MusicStream = stre
 
-	MusicStream = stre
+	dgvoice.PlayAudioFile(vc, song, done, close, errc)
 	Playing = true
 }
 

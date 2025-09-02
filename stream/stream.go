@@ -91,12 +91,12 @@ func (s *StreamingSession) stream() error {
 			s.repeat = false
 			s.done <- ErrStopped
 		}
-		s.Unlock()
 
+		s.Unlock()
 		err := s.readNext()
+		s.Lock()
 
 		if err != nil {
-			s.Lock()
 			s.finished = true
 			if !errors.Is(err, io.EOF) {
 				s.err = err
@@ -110,6 +110,7 @@ func (s *StreamingSession) stream() error {
 			s.Unlock()
 			break
 		}
+		s.Unlock()
 	}
 	if s.done != nil {
 		s.done <- ErrStreamIsDone
@@ -118,21 +119,21 @@ func (s *StreamingSession) stream() error {
 }
 
 func (s *StreamingSession) readNext() error {
+	s.Lock()
+	defer s.Unlock()
+
 	opus, err := s.source.OpusFrame()
 	if err != nil {
 		return err
 	}
-	s.Lock()
+
 	select {
 	case <-time.After(time.Second):
 		return ErrVoiceConnClosed
 	case s.vc.OpusSend <- opus:
 	}
-	s.Unlock()
 
-	s.Lock()
 	s.framesSent++
-	s.Unlock()
 	return nil
 }
 

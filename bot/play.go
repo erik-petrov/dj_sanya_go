@@ -132,7 +132,8 @@ func (b *Bot) onPlay(s *discordgo.Session, i *discordgo.InteractionCreate) {
 				return
 			}
 
-			songlink, err = getLinkTitle(song.Name+" "+song.Artist[0].Name+" lyrics", b.ytToken, s, i)
+			//songlink, err = getLinkTitle(song.Name+" "+song.Artist[0].Name+" lyrics", b.ytToken, s, i)
+			songlink = "ytsearch:" + song.Name + " " + song.Artist[0].Name + " lyrics"
 		} else {
 			songlink = link
 		}
@@ -226,10 +227,17 @@ func (b *Bot) onPlay(s *discordgo.Session, i *discordgo.InteractionCreate) {
 			}
 			content = "Добавил плейлист в очередь"
 		} else {
+			if len(bar.Entries) <= 0 {
+				err = errors.New("nothing found")
+				content = "Song not found"
+				break
+			}
 			toPlay := bar.Entries[0]
+
 			for i := 1; i < len(bar.Entries); i++ {
 				b.AddToQueue(bar.Entries[i])
 			}
+
 			content = "Играю: `" + toPlay.Title + "`\nДлительностью " + toPlay.Duration
 			song = toPlay
 		}
@@ -484,7 +492,7 @@ func getLinkTitle(link string, token string, s *discordgo.Session, i *discordgo.
 		s.InteractionResponseEdit(i.Interaction, &discordgo.WebhookEdit{
 			Content: &content,
 		})
-		return "", err
+		return "", errors.New("could not find any matching song")
 	}
 	ytlink = "https://youtube.com/watch?v=" + response.Results[0].ID.VideoID
 	return ytlink, nil
@@ -534,7 +542,7 @@ func getSpotifyLinkName(link string) (SpotifySong, error) {
 	}
 
 	var sp SpotifySong
-	err = json.Unmarshal([]byte(resBody), &sp)
+	err = json.Unmarshal(resBody, &sp)
 
 	if err != nil {
 		log.Println("Error while unmarshaling spotify song data: ", err)

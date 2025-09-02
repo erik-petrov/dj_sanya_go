@@ -492,7 +492,6 @@ func (e *EncodeSession) handleStderrLine(line string) {
 
 func (e *EncodeSession) readStdout(stdout io.ReadCloser) {
 	decoder := ogg.NewPacketDecoder(ogg.NewDecoder(stdout))
-
 	// the first 2 packets are ogg opus metadata
 	skipPackets := 2
 	for {
@@ -519,7 +518,6 @@ func (e *EncodeSession) readStdout(stdout io.ReadCloser) {
 
 func (e *EncodeSession) writeOpusFrame(opusFrame []byte) error {
 	var dcaBuf bytes.Buffer
-
 	err := binary.Write(&dcaBuf, binary.LittleEndian, int16(len(opusFrame)))
 	if err != nil {
 		return err
@@ -530,9 +528,8 @@ func (e *EncodeSession) writeOpusFrame(opusFrame []byte) error {
 		return err
 	}
 
-	e.frameChannel <- &Frame{dcaBuf.Bytes(), false}
-
 	e.Lock()
+	e.frameChannel <- &Frame{dcaBuf.Bytes(), false}
 	e.lastFrame++
 	e.Unlock()
 

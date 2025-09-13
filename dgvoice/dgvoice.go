@@ -11,6 +11,7 @@ package dgvoice
 import (
 	"bufio"
 	"encoding/binary"
+	"errors"
 	"fmt"
 	"github.com/bwmarrin/discordgo"
 	"io"
@@ -18,6 +19,7 @@ import (
 	"os"
 	"os/exec"
 	"strconv"
+	"time"
 )
 
 // NOTE: This API is not final and these are likely to change.
@@ -36,7 +38,15 @@ var (
 	speakers    map[uint32]*gopus.Decoder
 	opusEncoder *gopus.Encoder
 	errCh       chan error
+	commRes     ChannelCommunication
 )
+
+type ChannelCommunication struct {
+	Error error
+	Skip  bool
+	Stop  bool
+	Pause bool
+}
 
 // OnError gets called by dgvoice when an error is encountered.
 // By default logs to STDERR
@@ -95,7 +105,7 @@ func SendPCM(v *discordgo.VoiceConnection, pcm <-chan []int16) {
 	}
 }
 
-// ReceivePCM will receive on the the Discordgo OpusRecv channel and decode
+// ReceivePCM will receive on the Discordgo OpusRecv channel and decode
 // the opus audio into PCM then send it on the provided channel.
 func ReceivePCM(v *discordgo.VoiceConnection, c chan *discordgo.Packet) {
 	if c == nil {
@@ -141,7 +151,7 @@ func ReceivePCM(v *discordgo.VoiceConnection, c chan *discordgo.Packet) {
 // PlayAudioFile will play the given filename to the already connected
 // Discord voice server/channel.  voice websocket and udp socket
 // must already be setup before this will work.
-func PlayAudioFile(v *discordgo.VoiceConnection, filename string, stop <-chan bool, closed chan bool, errc chan error) {
+func PlayAudioFile(v *discordgo.VoiceConnection, filename string, stop chan ChannelCommunication, closed chan bool, errc chan error) {
 	errCh = errc
 	// Create a shell command "object" to run.
 	run := exec.Command("ffmpeg", "-i", filename, "-f", "s16le", "-ar", strconv.Itoa(frameRate), "-ac", strconv.Itoa(channels), "pipe:1")
@@ -165,8 +175,10 @@ func PlayAudioFile(v *discordgo.VoiceConnection, filename string, stop <-chan bo
 
 	//when stop is sent, kill ffmpeg
 	go func() {
-		<-stop
-		err = run.Process.Kill()
+		v := <-stop
+		if v.Stop {
+			err = run.Process.Kill()
+		}
 	}()
 
 	// Send "speaking" packet over the voice websocket
@@ -185,17 +197,41 @@ func PlayAudioFile(v *discordgo.VoiceConnection, filename string, stop <-chan bo
 
 	send := make(chan []int16, 2)
 	defer close(send)
+	defer close(stop)
 
 	go func() {
 		SendPCM(v, send)
 		closed <- true
 	}()
 
+	go func() {
+		for commRes = range stop {
+		}
+	}()
+
 	for {
+		if commRes.Skip {
+			break
+		}
+
+		if commRes.Stop {
+			closed <- true
+			break
+		}
+
+		if commRes.Pause {
+			for {
+				if !commRes.Pause {
+					break
+				}
+				time.Sleep(time.Millisecond * 50)
+			}
+		}
+
 		// read data from ffmpeg stdout
 		audiobuf := make([]int16, frameSize*channels)
 		err = binary.Read(ffmpegbuf, binary.LittleEndian, &audiobuf)
-		if err == io.EOF || err == io.ErrUnexpectedEOF {
+		if errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) {
 			closed <- true
 		}
 		if err != nil {

@@ -13,10 +13,13 @@ import (
 	"time"
 
 	"github.com/bwmarrin/discordgo"
+	"github.com/erik-petrov/dj_sanya_go/dca"
+	"github.com/erik-petrov/dj_sanya_go/stream"
 )
 
 var (
 	AfkTime                = 600
+	MusicStream            *stream.StreamingSession
 	ErrBotStandy           = errors.New("bot is on standy")
 	ErrVcNotReady          = errors.New("vc not ready")
 	ErrAlreadyRunning      = errors.New("already running")
@@ -24,15 +27,8 @@ var (
 	Queue                  = make([]YTDLPResponse, 0)
 	CurrentVoiceConnection *discordgo.VoiceConnection
 	Timers                 sync.Map
-	communicationChan      chan ChannelCommunication
+	closeChan              chan bool
 )
-
-type ChannelCommunication struct {
-	Error error
-	Skip  bool
-	Stop  bool
-	Pause bool
-}
 
 type YTDLPResponsePlaylist struct {
 	Title   string          `json:"title"`
@@ -59,6 +55,21 @@ var (
 	repeat   = false
 	starting = false
 )
+
+func encodeFile(song string) (ses *dca.EncodeSession, err error) {
+	options := dca.StdEncodeOptions
+	options.BufferedFrames = 100
+	options.FrameDuration = 20
+	options.RawOutput = true
+	options.Bitrate = 96
+	options.Application = "lowdelay"
+
+	ses, err = dca.EncodeFile(song, options)
+	if err != nil {
+		return
+	}
+	return
+}
 
 func (b *Bot) GetUsersInVoice(chn *discordgo.Channel) int {
 	gd, err := b.s.State.Guild(chn.GuildID)
@@ -180,12 +191,12 @@ func (b *Bot) setupPlayer(s *discordgo.Session, song string, guildID string, cha
 	//setup done
 	starting = false
 	done := make(chan bool, 1)
+	closeCh := make(chan bool, 1)
 	errCh := make(chan error, 1)
-	communicationChan = make(chan ChannelCommunication, 1)
 
 	go func() {
 		defer func() {
-			communicationChan <- ChannelCommunication{Stop: true}
+			closeCh <- true
 			close(done)
 			close(errCh)
 		}()
@@ -200,7 +211,7 @@ func (b *Bot) setupPlayer(s *discordgo.Session, song string, guildID string, cha
 				return
 			}
 
-			go b.play(vc, song, communicationChan, done, errCh)
+			go b.play(vc, song, closeCh, done, errCh)
 
 			<-done
 
@@ -226,7 +237,7 @@ func (b *Bot) setupPlayer(s *discordgo.Session, song string, guildID string, cha
 	return nil
 }
 
-func (b *Bot) play(vc *discordgo.VoiceConnection, song string, done chan bool, comms chan ChannelCommunication, errc chan error) {
+func (b *Bot) play(vc *discordgo.VoiceConnection, song string, done chan bool, close chan bool, errc chan error) {
 	//ses, err := encodeFile(song)
 	//defer ses.Cleanup()
 	//if err != nil {
@@ -237,7 +248,7 @@ func (b *Bot) play(vc *discordgo.VoiceConnection, song string, done chan bool, c
 	//stre := stream.NewStream(ses, vc, done)
 	//MusicStream = stre
 
-	dgvoice.PlayAudioFile(vc, song, comms, done, errc)
+	dgvoice.PlayAudioFile(vc, song, done, close, errc)
 	Playing = true
 }
 
@@ -389,28 +400,18 @@ func (b *Bot) downloadVideo(link string) (string, error) {
 }
 
 func (b *Bot) togglePause() (bool, error) {
-	if communicationChan == nil {
-		return false, errors.New("pause channel is nil")
-	}
-
-	if b.IsPlaying() {
-		communicationChan <- ChannelCommunication{Pause: true}
-	} else {
-		communicationChan <- ChannelCommunication{Pause: false}
-	}
-	return !b.IsPlaying(), nil
+	MusicStream.SetPaused(!MusicStream.Paused())
+	return MusicStream.Paused(), nil
 }
 
 func (b *Bot) stop() {
-	if communicationChan != nil {
-		repeat = false
-		Playing = false
-		communicationChan <- ChannelCommunication{Stop: true}
-	}
+	MusicStream.SetFinished()
+	repeat = false
+	Playing = false
 }
 
 func (b *Bot) skip() {
-	//TODO
+	MusicStream.SetSkipped()
 	repeat = false
 }
 

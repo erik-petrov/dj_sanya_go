@@ -32,4 +32,4 @@ jobs:
           key: ${{ secrets.SSH_KEY }}
           envs: VERSION
           script_stop: true
-          script: VERSION=${VERSION} ./dj_sanya_go/start_sanya.sh 
+          script: CD dj_sanya_go && VERSION=${VERSION} ./start_sanya.sh 

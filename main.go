@@ -1,12 +1,12 @@
 package main
 
 import (
+	"github.com/joho/godotenv"
 	"log"
 	"os"
 	"os/signal"
 
 	"github.com/erik-petrov/dj_sanya_go/bot"
-	"github.com/joho/godotenv"
 )
 
 // bot params
@@ -16,10 +16,12 @@ var (
 
 func main() {
 	log.SetFlags(log.LstdFlags | log.Lshortfile)
-	err := godotenv.Load()
-	if err != nil {
-		log.Println("Error loading .env file")
-		return
+
+	if os.Getenv("TESTING") == "true" {
+		err := godotenv.Load()
+		if err != nil {
+			log.Fatal("Error loading .env file")
+		}
 	}
 
 	token := os.Getenv("BOT_TOKEN")

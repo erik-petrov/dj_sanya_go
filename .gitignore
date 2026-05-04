@@ -4,3 +4,7 @@ main.go.example
 tests/
 temp.ogg
 cookies.txt
+lavalink/
+logs/
+.idea/
+*.log

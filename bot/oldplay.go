@@ -13,7 +13,6 @@ import (
 	"slices"
 	"sort"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/bwmarrin/discordgo"
@@ -21,21 +20,8 @@ import (
 
 var (
 	CurrentBotChannel string
-	wg                sync.WaitGroup
 	spotifyBearer     string
 )
-
-type YTResponse struct {
-	Results []struct {
-		ID struct {
-			VideoID string `json:"videoId"`
-		} `json:"id"`
-
-		Snippet struct {
-			Title string `jsin:"title"`
-		}
-	} `json:"items"`
-}
 
 type SpotifyResponse struct {
 	Token string `json:"access_token"`
@@ -61,364 +47,60 @@ type SpotifySong struct {
 	Album  Album    `json:"album"`
 }
 
-func castYTDLPResponse(data interface{}) (interface{}, error) {
-	// Marshal the interface{} back to JSON
-	jsonBytes, err := json.Marshal(data)
-	if err != nil {
-		return nil, err
-	}
-
-	// Unmarshal into a map to inspect structure
-	var raw map[string]interface{}
-	if err := json.Unmarshal(jsonBytes, &raw); err != nil {
-		return nil, err
-	}
-
-	// Check for the "entries" field to determine if it's a playlist
-	if _, ok := raw["entries"]; ok {
-		var playlist YTDLPResponsePlaylist
-		if err := json.Unmarshal(jsonBytes, &playlist); err != nil {
-			return nil, err
-		}
-		return playlist, nil
-	}
-
-	// Otherwise, assume it's a single video
-	var single YTDLPResponse
-	if err := json.Unmarshal(jsonBytes, &single); err != nil {
-		return nil, err
-	}
-	return single, nil
-}
-
-func (b *Bot) onPlay(s *discordgo.Session, i *discordgo.InteractionCreate) {
-	CurrentBotChannel = i.ChannelID
-
-	s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
-		Type: discordgo.InteractionResponseChannelMessageWithSource,
-		Data: &discordgo.InteractionResponseData{
-			Content: "Loading...",
-		},
-	})
-
-	title := ""
-	link := ""
-	attachment := false
-
-	if len(i.ApplicationCommandData().Options) == 0 {
-		s.FollowupMessageCreate(i.Interaction, true, &discordgo.WebhookParams{
-			Content: "No music data given",
-		})
-		return
-	}
-	switch i.ApplicationCommandData().Options[0].Type {
-	case 3: //string
-		link = i.ApplicationCommandData().Options[0].StringValue()
-
-		var err error
-		var songlink string
-
-		if !checkSubstrings(link, "youtu.be", "youtube", "soundcloud", "open.spotify", "spotify.com") {
-			//songlink, err = getLinkTitle(link, b.ytToken, s, i)
-			songlink = link
-		} else if checkSubstrings(link, "open.spotify", "spotify.com") {
-			var song SpotifySong
-			song, err = getSpotifyLinkName(link)
-			if err != nil {
-				s.FollowupMessageCreate(i.Interaction, true, &discordgo.WebhookParams{
-					Content: "Something went wrong: " + err.Error(),
-				})
-				log.Println(err.Error())
-				return
-			}
-
-			//songlink, err = getLinkTitle(song.Name+" "+song.Artist[0].Name+" lyrics", b.ytToken, s, i)
-			songlink = "ytsearch:" + song.Name + " " + song.Artist[0].Name + " lyrics"
-		} else {
-			songlink = link
-		}
-
-		if err != nil {
-			s.FollowupMessageCreate(i.Interaction, true, &discordgo.WebhookParams{
-				Content: "Something went wrong: " + err.Error(),
-			})
-			log.Println(err.Error())
-			return
-		}
-
-		link = songlink
-
-	case 11: //attachment
-		attachmentID := i.ApplicationCommandData().Options[0].Value.(string)
-		file := i.ApplicationCommandData().Resolved.Attachments[attachmentID]
-		link = file.URL
-		title = file.Filename
-		attachment = true
-	}
-
-	songCh := make(chan interface{})
-	errCh := make(chan error)
-	wg.Wait()
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
-		b.getSongData(link, attachment, songCh, errCh)
-	}()
-
-	song := <-songCh
-	err := <-errCh
-
-	if err != nil {
-		s.FollowupMessageCreate(i.Interaction, true, &discordgo.WebhookParams{
-			Content: "Something went wrong: " + err.Error(),
-		})
-		log.Println(err.Error())
-		return
-	}
-
-	song, err = castYTDLPResponse(song)
-	if err != nil {
-		log.Println("Something went wrong during casting: " + err.Error())
-		s.FollowupMessageCreate(i.Interaction, true, &discordgo.WebhookParams{
-			Content: "Something went wrong during casting: " + err.Error(),
-		})
-	}
-
-	content := ""
-	switch song.(type) {
-	case YTDLPResponse:
-		if attachment {
-			bar, ok := song.(YTDLPResponse)
-			if ok {
-				bar.Title = title
-			}
-			content = "Играю: `" + bar.Title + "`"
-		} else {
-			bar, ok := song.(YTDLPResponse)
-			if !ok {
-				s.FollowupMessageCreate(i.Interaction, true, &discordgo.WebhookParams{
-					Content: "Something went wrong: " + "type assertion failed",
-				})
-				return
-			}
-
-			if b.IsPlaying() {
-				b.AddToQueue(bar)
-				editInteraction(s, i, "Added `"+bar.Title+"` to queue!")
-				return
-			}
-
-			content = "Играю: `" + bar.Title + "`\nДлительностью " + bar.Duration
-			song = bar
-		}
-	case YTDLPResponsePlaylist:
-		bar, ok := song.(YTDLPResponsePlaylist)
-
-		if !ok {
-			s.FollowupMessageCreate(i.Interaction, true, &discordgo.WebhookParams{
-				Content: "Something went wrong: " + "type assertion failed",
-			})
-			return
-		}
-
-		if b.IsPlaying() { //add instantly everything to queue
-			for _, el := range bar.Entries {
-				b.AddToQueue(el)
-			}
-			content = "Добавил плейлист в очередь"
-		} else {
-			if len(bar.Entries) <= 0 {
-				err = errors.New("nothing found")
-				content = "Song not found"
-				break
-			}
-			toPlay := bar.Entries[0]
-
-			for i := 1; i < len(bar.Entries); i++ {
-				b.AddToQueue(bar.Entries[i])
-			}
-
-			content = "Играю: `" + toPlay.Title + "`\nДлительностью " + toPlay.Duration
-			song = toPlay
-		}
-	default:
-		log.Println("Something went wrong with type assertion")
-		err = errors.New("something went wrong with type assertion")
-	}
-
-	_, err = s.InteractionResponseEdit(i.Interaction, &discordgo.WebhookEdit{
-		Content: &content,
-	})
-
-	if err != nil {
-		s.FollowupMessageCreate(i.Interaction, true, &discordgo.WebhookParams{
-			Content: "Something went wrong: " + err.Error(),
-		})
-		log.Println(err.Error())
-		return
-	}
-
-	if b.IsPlaying() {
-		return
-	}
-
-	// Find the guild for that channel.
-	g, err := s.State.Guild(i.GuildID)
-	if err != nil {
-		// Could not find guild.
-		return
-	}
-
-	for _, vs := range g.VoiceStates {
-		if vs.UserID == i.Member.User.ID {
-			var songOk YTDLPResponse
-			var ok bool
-			if songOk, ok = song.(YTDLPResponse); ok {
-				rawURL := ""
-
-				if len(songOk.RequestedDownloads[0].RequestedFormats) == 0 {
-					rawURL = songOk.FallbackURL
-				} else if len(songOk.RequestedDownloads[0].RequestedFormats) > 1 {
-					rawURL = songOk.RequestedDownloads[0].RequestedFormats[1].URL
-				} else {
-					rawURL = songOk.RequestedDownloads[0].RequestedFormats[0].URL
-				}
-
-				/*rawURL, err := b.downloadVideo(rawURL)
-				if err != nil {
-					log.Println("Error downloading sound:", err)
-					s.FollowupMessageCreate(i.Interaction, true, &discordgo.WebhookParams{
-						Content: "Something went wrong: " + err.Error(),
-					})
-					return
-				}*/
-
-				err = b.setupPlayer(s, rawURL, g.ID, vs.ChannelID)
-				if err != nil {
-					log.Println("Error playing sound:", err)
-					s.FollowupMessageCreate(i.Interaction, true, &discordgo.WebhookParams{
-						Content: "Something went wrong: " + err.Error(),
-					})
-					return
-				}
-			} else {
-				s.FollowupMessageCreate(i.Interaction, true, &discordgo.WebhookParams{
-					Content: "Something went wrong: " + "type assertion failed when playing",
-				})
-				return
-			}
-		}
-	}
-}
-
 func (b *Bot) onStop(s *discordgo.Session, i *discordgo.InteractionCreate) {
-	guildID := i.GuildID
-	if guildID != "" && LavalinkClient != nil {
-		err := b.StopLavalink(guildID)
-		if err != nil {
-			s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
-				Type: discordgo.InteractionResponseChannelMessageWithSource,
-				Data: &discordgo.InteractionResponseData{
-					Content: "Error stopping: " + err.Error(),
-				},
-			})
-			return
-		}
-	} else {
-		b.stop()
+	if LavalinkClient == nil {
+		respond(s, i, "Music is not available right now.")
+		return
 	}
-	s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
-		Type: discordgo.InteractionResponseChannelMessageWithSource,
-		Data: &discordgo.InteractionResponseData{
-			Content: "Stopped track!",
-		},
-	})
+	if err := b.StopLavalink(i.GuildID); err != nil {
+		respond(s, i, "Error stopping: "+err.Error())
+		return
+	}
+	respond(s, i, "Stopped track!")
 }
 
 func (b *Bot) onPause(s *discordgo.Session, i *discordgo.InteractionCreate) {
-	guildID := i.GuildID
-	text := ""
-	if guildID != "" && LavalinkClient != nil {
-		player := GetOrCreatePlayer(guildID)
-		if player != nil {
-			currentPaused := player.Paused()
-			err := b.PauseLavalink(guildID, !currentPaused)
-			if err != nil {
-				text = "Error: " + err.Error()
-			} else {
-				if !currentPaused {
-					text = "Paused!"
-				} else {
-					text = "Continued!"
-				}
-			}
-		} else {
-			text = "No player found"
-		}
-	} else {
-		paused, err := b.togglePause()
-		if err != nil {
-			text = "Music isn't playing!"
-		} else {
-			if paused {
-				text = "Paused!"
-			} else {
-				text = "Continued!"
-			}
-		}
+	if LavalinkClient == nil {
+		respond(s, i, "Music is not available right now.")
+		return
 	}
-	s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
-		Type: discordgo.InteractionResponseChannelMessageWithSource,
-		Data: &discordgo.InteractionResponseData{
-			Content: text,
-		},
-	})
+	paused := !GetOrCreatePlayer(i.GuildID).Paused()
+	if err := b.PauseLavalink(i.GuildID, paused); err != nil {
+		respond(s, i, "Error: "+err.Error())
+		return
+	}
+	if paused {
+		respond(s, i, "Paused!")
+	} else {
+		respond(s, i, "Continued!")
+	}
 }
 
 func (b *Bot) onRepeat(s *discordgo.Session, i *discordgo.InteractionCreate) {
-	ans, err := b.toggleRepeat()
-	content := ""
-
-	if err != nil {
-		content = "No music playing at this moment."
-	} else {
-		if ans {
-			content = "Repeating currently playing track!"
-		} else {
-			content = "Stopped repeating!"
-		}
+	if LavalinkClient == nil {
+		respond(s, i, "Music is not available right now.")
+		return
 	}
-
-	s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
-		Type: discordgo.InteractionResponseChannelMessageWithSource,
-		Data: &discordgo.InteractionResponseData{
-			Content: content,
-		},
-	})
+	queue := LavalinkQueues.Get(i.GuildID)
+	if queue.Type == QueueTypeRepeatTrack {
+		queue.Type = QueueTypeNormal
+		respond(s, i, "Stopped repeating!")
+	} else {
+		queue.Type = QueueTypeRepeatTrack
+		respond(s, i, "Repeating currently playing track!")
+	}
 }
 
 func (b *Bot) onSkip(s *discordgo.Session, i *discordgo.InteractionCreate) {
-	guildID := i.GuildID
-	if guildID != "" && LavalinkClient != nil {
-		err := b.StopLavalink(guildID)
-		if err != nil {
-			s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
-				Type: discordgo.InteractionResponseChannelMessageWithSource,
-				Data: &discordgo.InteractionResponseData{
-					Content: "Error skipping: " + err.Error(),
-				},
-			})
-			return
-		}
-	} else {
-		b.skip()
+	if LavalinkClient == nil {
+		respond(s, i, "Music is not available right now.")
+		return
 	}
-	s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
-		Type: discordgo.InteractionResponseChannelMessageWithSource,
-		Data: &discordgo.InteractionResponseData{
-			Content: "Skipped!",
-		},
-	})
+	if err := b.SkipLavalink(i.GuildID); err != nil {
+		respond(s, i, "Error skipping: "+err.Error())
+		return
+	}
+	respond(s, i, "Skipped!")
 }
 
 func (b *Bot) wakeUp(s *discordgo.Session, i *discordgo.InteractionCreate) {
@@ -516,35 +198,6 @@ func editInteraction(s *discordgo.Session, i *discordgo.InteractionCreate, msg s
 	s.InteractionResponseEdit(i.Interaction, &discordgo.WebhookEdit{
 		Content: &msg,
 	})
-}
-
-func getLinkTitle(link string, token string, s *discordgo.Session, i *discordgo.InteractionCreate) (ytlink string, err error) {
-	searchURL := "https://www.googleapis.com/youtube/v3/search?part=snippet&maxResults=1&q=" + url.QueryEscape(link) + "&type=video&key=" + token
-	res, err := http.DefaultClient.Get(searchURL)
-	if err != nil {
-		log.Printf("couldnt make the search request: %s\n", err)
-		return "", err
-	}
-	resBody, err := io.ReadAll(res.Body)
-	if err != nil {
-		log.Printf("could not read response body: %s\n", err)
-		return "", err
-	}
-	var response YTResponse
-	err = json.Unmarshal([]byte(resBody), &response)
-	if err != nil {
-		log.Printf("could not parse response: %s.\n body: %s\n request: %s\n", err, resBody, searchURL)
-		return "", err
-	}
-	if len(response.Results) == 0 {
-		content := "Song not found"
-		s.InteractionResponseEdit(i.Interaction, &discordgo.WebhookEdit{
-			Content: &content,
-		})
-		return "", errors.New("could not find any matching song")
-	}
-	ytlink = "https://youtube.com/watch?v=" + response.Results[0].ID.VideoID
-	return ytlink, nil
 }
 
 func findUserVoiceState(userid string, guild *discordgo.Guild) (*discordgo.VoiceState, error) {

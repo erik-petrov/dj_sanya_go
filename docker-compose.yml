@@ -1,10 +1,47 @@
-version: '3.8'
+# Runs the whole stack together:  docker compose up -d
+#
+# Service names double as hostnames on the default compose network, which is
+# why the bot points at "lavalink:2333" and Lavalink points at
+# "http://yt-cipher:8001" (configured in lavalink/application.yml).
 
 services:
-  dj_sanya_go:
-    image: koteman123/dj_sanya_go:${VERSION}
-    container_name: sanya
-    env_file: ".env"
+  # Remote cipher server: deciphers YouTube stream signatures for the
+  # youtube-source plugin (fixes "Must find sig function from script").
+  yt-cipher:
+    image: ghcr.io/kikkia/yt-cipher:master
+    container_name: yt-cipher
     restart: unless-stopped
+    environment:
+      # Only the IAS variant works reliably right now (per yt-cipher docs).
+      - OVERRIDE_PLAYER_VARIANT=IAS
+      # yt-cipher's port is NOT published to the host, so it is only reachable
+      # from inside this compose network and auth is optional. To require it,
+      # uncomment below and set remoteCipher.password in application.yml to match:
+      # - API_TOKEN=changeme
+
+  # Lavalink audio node. Auto-downloads the youtube-plugin pinned in
+  # application.yml on startup.
+  lavalink:
+    image: ghcr.io/lavalink-devs/lavalink:4
+    container_name: lavalink
+    restart: unless-stopped
+    depends_on:
+      - yt-cipher
+    environment:
+      - _JAVA_OPTIONS=-Xmx1G # cap heap; raise if you see OOM
     volumes:
-      - ./cookies.txt:/cookies.txt
+      - ./lavalink/application.yml:/opt/Lavalink/application.yml:ro
+
+  # The Discord bot. It connects out to Discord and to the lavalink service.
+  dj_sanya_go:
+    build: . # build the local code (the published image lacks the Lavalink work)
+    image: koteman123/dj_sanya_go:${VERSION:-latest}
+    container_name: sanya
+    restart: unless-stopped
+    depends_on:
+      - lavalink
+    env_file: ".env" # BOT_TOKEN, SPOTIFY_*, etc.
+    environment:
+      - LAVALINK_ADDRESS=lavalink:2333
+      - LAVALINK_PASSWORD=youshallnotpass # must match server.password in application.yml
+      - LAVALINK_SECURE=false

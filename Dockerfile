@@ -1,16 +1,15 @@
-FROM golang:latest
-
-WORKDIR /code
-RUN apt-get update
-RUN apt-get -y install python3
-RUN apt-get -y install python3-setuptools
-RUN apt-get -y install python3-pip
-RUN apt-get install -y ffmpeg
-RUN mkdir /usr/bin/yt-dlp
-ENV PATH="/usr/bin/yt-dlp:$PATH"
-ADD https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp /usr/bin/yt-dlp
-RUN chmod a+rx /usr/bin/yt-dlp/yt-dlp
-COPY . .
+# ---- build stage ----
+FROM golang:1.26 AS build
+WORKDIR /src
+COPY go.mod go.sum ./
 RUN go mod download
-RUN mkdir temp_vids
-CMD ["go", "run", "main.go"]
+COPY . .
+# CGO disabled => a fully static binary. No libopus/ffmpeg/yt-dlp/python needed:
+# Lavalink handles all audio, the bot only sends it commands.
+RUN CGO_ENABLED=0 go build -ldflags="-s -w" -o /bot .
+
+# ---- run stage ----
+# distroless/static ships ca-certificates + tzdata and nothing else (~2 MB base).
+FROM gcr.io/distroless/static-debian12
+COPY --from=build /bot /bot
+ENTRYPOINT ["/bot"]

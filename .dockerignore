@@ -1,4 +1,14 @@
+# Keep the build context small and avoid copying secrets/config into the image.
 /tests
 .vscode
+.idea
+.git
 /.github
+lavalink/
+logs/
+*.md
+Dockerfile
+docker-compose.yml
+.env
 cookies.txt
+temp_vids/

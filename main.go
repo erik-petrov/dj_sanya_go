@@ -11,17 +11,14 @@ import (
 
 // bot params
 var (
-	GuildID = "1009396276661583912" //472357061267816468
+	GuildID = "1493654034203148380" //472357061267816468 1009396276661583912
 )
 
 func main() {
 	log.SetFlags(log.LstdFlags | log.Lshortfile)
 
-	if os.Getenv("TESTING") == "true" {
-		err := godotenv.Load()
-		if err != nil {
-			log.Fatal("Error loading .env file")
-		}
+	if err := godotenv.Load(); err != nil {
+		log.Println("no .env file found, relying on environment variables")
 	}
 
 	token := os.Getenv("BOT_TOKEN")

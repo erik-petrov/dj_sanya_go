@@ -3,7 +3,6 @@ package bot
 import (
 	"fmt"
 	"log"
-	"strconv"
 	"time"
 
 	"github.com/bwmarrin/discordgo"
@@ -27,14 +26,24 @@ type Boot struct {
 
 func New(boot Boot) (*Bot, error) {
 	s, err := discordgo.New("Bot " + boot.Token)
-	return &Bot{s: s, guildID: boot.GuildID, ytToken: boot.YtToken, sfToken: boot.SfToken, sfSecret: boot.SfSecret}, err
+	if err != nil {
+		return nil, err
+	}
+	// Lavalink needs the voice state/server gateway events and a cached voice
+	// state so we can find which channel the requesting user is in.
+	s.Identify.Intents |= discordgo.IntentsGuildVoiceStates
+	s.State.TrackVoice = true
+	return &Bot{s: s, guildID: boot.GuildID, ytToken: boot.YtToken, sfToken: boot.SfToken, sfSecret: boot.SfSecret}, nil
 }
 
 func (b *Bot) Start() error {
-	err := b.s.Open()
+	if err := b.s.Open(); err != nil {
+		return err
+	}
+	b.setupLavalink()
 	b.setupCommands()
 	b.sirusParsing()
-	return err
+	return nil
 }
 
 func (b *Bot) Close() {
@@ -71,26 +80,51 @@ func (b *Bot) sirusParsing() {
 	}()
 }
 
+// GetUsersInVoice returns how many users are currently in the given voice channel.
+func (b *Bot) GetUsersInVoice(chn *discordgo.Channel) int {
+	if chn == nil {
+		return -1
+	}
+	gd, err := b.s.State.Guild(chn.GuildID)
+	if err != nil {
+		log.Println(err)
+		return -1
+	}
+	amount := 0
+	for _, h := range gd.VoiceStates {
+		if h.ChannelID == chn.ID {
+			amount++
+		}
+	}
+	return amount
+}
+
 func (b *Bot) debug(s *discordgo.Session, i *discordgo.InteractionCreate) {
-	var ch, _ = b.s.Channel(CurrentBotChannel)
+	ch, _ := b.s.Channel(CurrentBotChannel)
 	log.Println(b.GetUsersInVoice(ch))
 }
 
 func (b *Bot) queue(s *discordgo.Session, i *discordgo.InteractionCreate) {
-	var response string
-
-	q := b.GetQueue()
-
-	for i, ytdlpResponse := range q {
-		response += strconv.Itoa(i) + ": [" + ytdlpResponse.Title + "](" + ytdlpResponse.WebpageURL + ")\n"
+	if LavalinkClient == nil {
+		respond(s, i, "Music is not available right now.")
+		return
 	}
 
-	s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
-		Type: discordgo.InteractionResponseChannelMessageWithSource,
-		Data: &discordgo.InteractionResponseData{
-			Content: "Current queue: \n" + response,
-		},
-	})
+	tracks := LavalinkQueues.Get(i.GuildID).List()
+	if len(tracks) == 0 {
+		respond(s, i, "Queue is empty")
+		return
+	}
+
+	var response string
+	for idx, track := range tracks {
+		uri := ""
+		if track.Info.URI != nil {
+			uri = *track.Info.URI
+		}
+		response += fmt.Sprintf("%d: [%s](%s)\n", idx+1, track.Info.Title, uri)
+	}
+	respond(s, i, "Current queue:\n"+response)
 }
 
 func (b *Bot) setupCommands() {
@@ -169,8 +203,6 @@ func (b *Bot) setupCommands() {
 
 		"queue": b.queue,
 	}
-
-	b.s.AddHandler(b.HandleVoiceStateUpdate)
 
 	b.s.AddHandler(func(s *discordgo.Session, i *discordgo.InteractionCreate) {
 		if h, ok := commandHandlers[i.ApplicationCommandData().Name]; ok {

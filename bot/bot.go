@@ -9,19 +9,22 @@ import (
 )
 
 type Bot struct {
-	s        *discordgo.Session
-	guildID  string
-	ytToken  string
-	sfToken  string
-	sfSecret string
+	s         *discordgo.Session
+	ears      *discordgo.Session // second session used only to receive voice
+	guildID   string
+	earsToken string
+	ytToken   string
+	sfToken   string
+	sfSecret  string
 }
 
 type Boot struct {
-	GuildID  string
-	Token    string
-	YtToken  string
-	SfToken  string
-	SfSecret string
+	GuildID   string
+	Token     string
+	EarsToken string
+	YtToken   string
+	SfToken   string
+	SfSecret  string
 }
 
 func New(boot Boot) (*Bot, error) {
@@ -33,7 +36,7 @@ func New(boot Boot) (*Bot, error) {
 	// state so we can find which channel the requesting user is in.
 	s.Identify.Intents |= discordgo.IntentsGuildVoiceStates
 	s.State.TrackVoice = true
-	return &Bot{s: s, guildID: boot.GuildID, ytToken: boot.YtToken, sfToken: boot.SfToken, sfSecret: boot.SfSecret}, nil
+	return &Bot{s: s, guildID: boot.GuildID, earsToken: boot.EarsToken, ytToken: boot.YtToken, sfToken: boot.SfToken, sfSecret: boot.SfSecret}, nil
 }
 
 func (b *Bot) Start() error {
@@ -41,12 +44,18 @@ func (b *Bot) Start() error {
 		return err
 	}
 	b.setupLavalink()
+	b.setupEars()
 	b.setupCommands()
 	b.sirusParsing()
 	return nil
 }
 
 func (b *Bot) Close() {
+	if b.ears != nil {
+		if err := b.ears.Close(); err != nil {
+			log.Println("Error closing ears session:", err)
+		}
+	}
 	err := b.s.Close()
 	if err != nil {
 		log.Println("Error closing Discord session:", err)
@@ -100,7 +109,7 @@ func (b *Bot) GetUsersInVoice(chn *discordgo.Channel) int {
 }
 
 func (b *Bot) debug(s *discordgo.Session, i *discordgo.InteractionCreate) {
-	ch, _ := b.s.Channel(CurrentBotChannel)
+	ch, _ := b.s.Channel(i.ChannelID)
 	log.Println(b.GetUsersInVoice(ch))
 }
 
@@ -184,6 +193,14 @@ func (b *Bot) setupCommands() {
 			Name:        "queue",
 			Description: "Current queue",
 		},
+		{
+			Name:        "listen",
+			Description: "Make the bot join your voice channel and listen for voice commands.",
+		},
+		{
+			Name:        "unlisten",
+			Description: "Stop listening and leave the voice channel.",
+		},
 	}
 
 	commandHandlers := map[string]func(s *discordgo.Session, i *discordgo.InteractionCreate){
@@ -202,6 +219,10 @@ func (b *Bot) setupCommands() {
 		"debug": b.debug,
 
 		"queue": b.queue,
+
+		"listen": b.onListen,
+
+		"unlisten": b.onUnlisten,
 	}
 
 	b.s.AddHandler(func(s *discordgo.Session, i *discordgo.InteractionCreate) {
@@ -213,6 +234,12 @@ func (b *Bot) setupCommands() {
 	b.s.AddHandler(func(s *discordgo.Session, r *discordgo.Ready) {
 		log.Printf("Logged in as: %v#%v", s.State.User.Username, s.State.User.Discriminator)
 	})
+
+	if b.guildID == "" {
+		log.Println("registering global slash commands (visible in every server; can take up to ~1h to propagate)")
+	} else {
+		log.Println("registering slash commands to guild", b.guildID)
+	}
 
 	registeredCommands := make([]*discordgo.ApplicationCommand, len(commands))
 	for i, v := range commands {

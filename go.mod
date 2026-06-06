@@ -12,8 +12,11 @@ require (
 )
 
 require (
+	github.com/cloudflare/circl v1.6.3 // indirect
 	github.com/disgoorg/json v1.2.0 // indirect
 	github.com/gorilla/websocket v1.5.3 // indirect
 	golang.org/x/crypto v0.41.0 // indirect
 	golang.org/x/sys v0.35.0 // indirect
 )
+
+replace github.com/bwmarrin/discordgo => ./third_party/discordgo

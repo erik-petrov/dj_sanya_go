@@ -9,11 +9,6 @@ import (
 	"github.com/erik-petrov/dj_sanya_go/bot"
 )
 
-// bot params
-var (
-	GuildID = "1493654034203148380" //472357061267816468 1009396276661583912
-)
-
 func main() {
 	log.SetFlags(log.LstdFlags | log.Lshortfile)
 
@@ -27,12 +22,15 @@ func main() {
 		log.Fatal("no token")
 	}
 
+	// GUILD_ID empty => register commands globally (every server the bot is in).
+	// Set it (e.g. for local dev) to register instantly to a single guild.
 	boot := bot.Boot{
-		GuildID:  GuildID,
-		Token:    os.Getenv("BOT_TOKEN"),
-		YtToken:  os.Getenv("YT_TOKEN"),
-		SfToken:  os.Getenv("SPOTIFY_ID"),
-		SfSecret: os.Getenv("SPOTIFY_SECRET"),
+		GuildID:   os.Getenv("GUILD_ID"),
+		Token:     os.Getenv("BOT_TOKEN"),
+		EarsToken: os.Getenv("EARS_BOT_TOKEN"),
+		YtToken:   os.Getenv("YT_TOKEN"),
+		SfToken:   os.Getenv("SPOTIFY_ID"),
+		SfSecret:  os.Getenv("SPOTIFY_SECRET"),
 	}
 
 	bot, err := bot.New(boot)

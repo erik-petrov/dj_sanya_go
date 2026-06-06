@@ -18,10 +18,7 @@ import (
 	"github.com/bwmarrin/discordgo"
 )
 
-var (
-	CurrentBotChannel string
-	spotifyBearer     string
-)
+var spotifyBearer string
 
 type SpotifyResponse struct {
 	Token string `json:"access_token"`

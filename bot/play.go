@@ -25,6 +25,10 @@ var LavalinkClient disgolink.Client
 // LavalinkQueues holds the per-guild track queue for Lavalink playback.
 var LavalinkQueues = &QueueManager{queues: make(map[string]*LavalinkQueue)}
 
+// announceChannels maps a guild ID to the text channel where /play was last
+// used, so "now playing" messages for that guild go to the right place.
+var announceChannels sync.Map
+
 var (
 	// urlPattern matches anything that already looks like a URL.
 	urlPattern = regexp.MustCompile(`^https?://[-a-zA-Z0-9+&@#/%?=~_|!:,.;]*[-a-zA-Z0-9+&@#/%=~_|]?`)
@@ -202,6 +206,7 @@ func (b *Bot) onVoiceStateUpdate(s *discordgo.Session, event *discordgo.VoiceSta
 
 	if event.ChannelID == "" {
 		LavalinkQueues.Delete(event.GuildID)
+		announceChannels.Delete(event.GuildID)
 	}
 }
 
@@ -240,8 +245,8 @@ func (b *Bot) onTrackEnd(player disgolink.Player, event lavalink.TrackEndEvent) 
 		log.Println("failed to play next track:", err)
 		return
 	}
-	if CurrentBotChannel != "" {
-		_, _ = b.s.ChannelMessageSend(CurrentBotChannel, "Playing: `"+next.Info.Title+"`")
+	if ch, ok := announceChannels.Load(guildID); ok {
+		_, _ = b.s.ChannelMessageSend(ch.(string), "Playing: `"+next.Info.Title+"`")
 	}
 }
 
@@ -304,7 +309,7 @@ func (b *Bot) onPlay(s *discordgo.Session, i *discordgo.InteractionCreate) {
 		return
 	}
 
-	CurrentBotChannel = i.ChannelID
+	announceChannels.Store(i.GuildID, i.ChannelID)
 
 	identifier, ok := b.resolveIdentifier(s, i)
 	if !ok {
@@ -325,8 +330,18 @@ func (b *Bot) onPlay(s *discordgo.Session, i *discordgo.InteractionCreate) {
 		return
 	}
 
-	player := GetOrCreatePlayer(i.GuildID)
-	queue := LavalinkQueues.Get(i.GuildID)
+	b.loadAndPlay(i.GuildID, voiceState.ChannelID, identifier, func(m string) {
+		editInteraction(s, i, m)
+	})
+}
+
+// loadAndPlay resolves an identifier on the Lavalink node and either starts it
+// (if nothing is playing) or queues it. Status goes through the report callback
+// so the slash command (interaction edit) and the voice command (channel
+// message) share this core. Caller must have checked LavalinkClient != nil.
+func (b *Bot) loadAndPlay(guildID, voiceChannelID, identifier string, report func(string)) {
+	player := GetOrCreatePlayer(guildID)
+	queue := LavalinkQueues.Get(guildID)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
@@ -334,7 +349,7 @@ func (b *Bot) onPlay(s *discordgo.Session, i *discordgo.InteractionCreate) {
 	var toPlay *lavalink.Track
 	LavalinkClient.BestNode().LoadTracksHandler(ctx, identifier, disgolink.NewResultHandler(
 		func(track lavalink.Track) {
-			editInteraction(s, i, "Loaded: `"+track.Info.Title+"`")
+			report("Loaded: `" + track.Info.Title + "`")
 			if player.Track() == nil {
 				toPlay = &track
 			} else {
@@ -342,7 +357,7 @@ func (b *Bot) onPlay(s *discordgo.Session, i *discordgo.InteractionCreate) {
 			}
 		},
 		func(playlist lavalink.Playlist) {
-			editInteraction(s, i, fmt.Sprintf("Loaded playlist `%s` with %d tracks", playlist.Info.Name, len(playlist.Tracks)))
+			report(fmt.Sprintf("Loaded playlist `%s` with %d tracks", playlist.Info.Name, len(playlist.Tracks)))
 			if player.Track() == nil && len(playlist.Tracks) > 0 {
 				toPlay = &playlist.Tracks[0]
 				queue.Add(playlist.Tracks[1:]...)
@@ -351,7 +366,7 @@ func (b *Bot) onPlay(s *discordgo.Session, i *discordgo.InteractionCreate) {
 			}
 		},
 		func(tracks []lavalink.Track) {
-			editInteraction(s, i, "Loaded: `"+tracks[0].Info.Title+"`")
+			report("Loaded: `" + tracks[0].Info.Title + "`")
 			if player.Track() == nil {
 				toPlay = &tracks[0]
 			} else {
@@ -359,29 +374,57 @@ func (b *Bot) onPlay(s *discordgo.Session, i *discordgo.InteractionCreate) {
 			}
 		},
 		func() {
-			editInteraction(s, i, "Nothing found for: `"+identifier+"`")
+			report("Nothing found for: `" + identifier + "`")
 		},
 		func(err error) {
-			editInteraction(s, i, "Error while looking up query: `"+err.Error()+"`")
+			report("Error while looking up query: `" + err.Error() + "`")
 		},
 	))
 
 	if toPlay == nil {
-		// Either nothing was found, or the track was queued behind the current one.
+		// Nothing found, or the track was queued behind the current one.
 		return
 	}
 
-	if err := s.ChannelVoiceJoinManual(i.GuildID, voiceState.ChannelID, false, true); err != nil {
-		editInteraction(s, i, "Error joining voice channel: "+err.Error())
+	if err := b.s.ChannelVoiceJoinManual(guildID, voiceChannelID, false, true); err != nil {
+		report("Error joining voice channel: " + err.Error())
 		return
 	}
 
 	if err := player.Update(context.TODO(), lavalink.WithTrack(*toPlay)); err != nil {
-		editInteraction(s, i, "Error playing track: "+err.Error())
+		report("Error playing track: " + err.Error())
 		return
 	}
 
-	sendToChannel(s, i, "Playing: `"+toPlay.Info.Title+"`")
+	report("▶️ Playing: `" + toPlay.Info.Title + "`")
+}
+
+// playQuery is the non-interaction entry point used by voice commands: resolve
+// the spoken query and play it in voiceChannelID (the channel the ears bot is
+// listening in). Status messages go to announceChannelID (may be empty).
+func (b *Bot) playQuery(guildID, voiceChannelID, query, announceChannelID string) {
+	report := func(m string) {
+		if announceChannelID != "" {
+			_, _ = b.s.ChannelMessageSend(announceChannelID, m)
+		}
+	}
+
+	if LavalinkClient == nil {
+		report("Music is not available right now.")
+		return
+	}
+	if voiceChannelID == "" {
+		report("You need to be in a voice channel!")
+		return
+	}
+
+	identifier, err := queryToIdentifier(query)
+	if err != nil {
+		report("Something went wrong: " + err.Error())
+		return
+	}
+
+	b.loadAndPlay(guildID, voiceChannelID, identifier, report)
 }
 
 // resolveIdentifier turns the /play options (a query string or an uploaded
@@ -406,26 +449,37 @@ func (b *Bot) resolveIdentifier(s *discordgo.Session, i *discordgo.InteractionCr
 
 	switch {
 	case query != "":
-		if checkSubstrings(query, "open.spotify", "spotify.com") {
-			song, err := getSpotifyLinkName(query)
-			if err != nil {
-				respond(s, i, "Something went wrong: "+err.Error())
-				return "", false
-			}
-			search := song.Name
-			if len(song.Artist) > 0 {
-				search += " " + song.Artist[0].Name + " lyrics"
-			}
-			return lavalink.SearchTypeYouTube.Apply(search), true
+		id, err := queryToIdentifier(query)
+		if err != nil {
+			respond(s, i, "Something went wrong: "+err.Error())
+			return "", false
 		}
-		if urlPattern.MatchString(query) || searchPattern.MatchString(query) {
-			return query, true
-		}
-		return lavalink.SearchTypeYouTube.Apply(query), true
+		return id, true
 	case attachmentURL != "":
 		return attachmentURL, true
 	default:
 		respond(s, i, "No music data given")
 		return "", false
 	}
+}
+
+// queryToIdentifier turns a raw query (typed or spoken) into a Lavalink
+// identifier: Spotify links become a YouTube search, URLs and "xxsearch:"
+// queries pass through, everything else becomes a YouTube search.
+func queryToIdentifier(query string) (string, error) {
+	if checkSubstrings(query, "open.spotify", "spotify.com") {
+		song, err := getSpotifyLinkName(query)
+		if err != nil {
+			return "", err
+		}
+		search := song.Name
+		if len(song.Artist) > 0 {
+			search += " " + song.Artist[0].Name + " lyrics"
+		}
+		return lavalink.SearchTypeYouTube.Apply(search), nil
+	}
+	if urlPattern.MatchString(query) || searchPattern.MatchString(query) {
+		return query, nil
+	}
+	return lavalink.SearchTypeYouTube.Apply(query), nil
 }

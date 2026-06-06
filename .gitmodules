@@ -1,0 +1,4 @@
+[submodule "third_party/discordgo"]
+	path = third_party/discordgo
+	url = https://github.com/yeongaori/discordgo
+	branch = dev

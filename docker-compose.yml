@@ -29,8 +29,25 @@ services:
       - yt-cipher
     environment:
       - _JAVA_OPTIONS=-Xmx1G # cap heap; raise if you see OOM
+    ports:
+      # expose to the host (localhost only) so a locally-run `go run .` bot can
+      # reach Lavalink during development; the in-compose bot still uses lavalink:2333
+      - "127.0.0.1:2333:2333"
     volumes:
       - ./lavalink/application.yml:/opt/Lavalink/application.yml:ro
+
+  # Speech-to-text sidecar (faster-whisper, Russian) for voice commands.
+  stt:
+    build: ./stt
+    container_name: stt
+    restart: unless-stopped
+    environment:
+      - WHISPER_MODEL=small # bump to medium / large-v3 for better Russian accuracy
+    ports:
+      # host access so a locally-run `go run .` bot can reach it during dev
+      - "127.0.0.1:8002:8000"
+    volumes:
+      - whisper-cache:/root/.cache # persist downloaded models across restarts
 
   # The Discord bot. It connects out to Discord and to the lavalink service.
   dj_sanya_go:
@@ -40,8 +57,13 @@ services:
     restart: unless-stopped
     depends_on:
       - lavalink
-    env_file: ".env" # BOT_TOKEN, SPOTIFY_*, etc.
+      - stt
+    env_file: ".env" # BOT_TOKEN, EARS_BOT_TOKEN, SPOTIFY_*, etc.
     environment:
       - LAVALINK_ADDRESS=lavalink:2333
       - LAVALINK_PASSWORD=youshallnotpass # must match server.password in application.yml
       - LAVALINK_SECURE=false
+      - STT_URL=http://stt:8000
+
+volumes:
+  whisper-cache:

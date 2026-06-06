@@ -8,3 +8,5 @@ lavalink/
 logs/
 .idea/
 *.log
+__pycache__/
+*.pyc

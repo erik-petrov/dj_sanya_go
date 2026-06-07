@@ -97,6 +97,7 @@ func (b *Bot) receiveLoop(l *earsListener) {
 	const (
 		silenceGap         = 800 * time.Millisecond // gap that ends an utterance
 		minUtteranceFrames = 25                     // ignore blips shorter than ~0.5s
+		maxUtteranceFrames = 500                     // ~10s: flush long/continuous audio so it can't hog the queue
 	)
 
 	// OpusRecv is created during the voice handshake; wait briefly for it.
@@ -154,6 +155,9 @@ func (b *Bot) receiveLoop(l *earsListener) {
 			}
 			u.frames = append(u.frames, frame)
 			u.last = time.Now()
+			if len(u.frames) >= maxUtteranceFrames {
+				flush(p.SSRC, u)
+			}
 		case <-ticker.C:
 			now := time.Now()
 			for ssrc, u := range active {

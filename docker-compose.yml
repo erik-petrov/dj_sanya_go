@@ -1,8 +1,12 @@
-# Runs the whole stack together:  docker compose up -d
+# Full stack — one command brings up the bot + Lavalink + cipher + STT:
 #
-# Service names double as hostnames on the default compose network, which is
-# why the bot points at "lavalink:2333" and Lavalink points at
-# "http://yt-cipher:8001" (configured in lavalink/application.yml).
+#   git submodule update --init --recursive   # fetch the discordgo DAVE fork
+#   docker compose up -d --build
+#
+# Requires: .env (BOT_TOKEN, EARS_BOT_TOKEN, SPOTIFY_*, ...) and
+# lavalink/application.yml. Service names are the hostnames on the compose
+# network (bot -> lavalink:2333, lavalink -> http://yt-cipher:8001,
+# bot -> http://stt:8000); nothing is exposed to the host.
 
 services:
   # Remote cipher server: deciphers YouTube stream signatures for the
@@ -29,10 +33,6 @@ services:
       - yt-cipher
     environment:
       - _JAVA_OPTIONS=-Xmx1G # cap heap; raise if you see OOM
-    ports:
-      # expose to the host (localhost only) so a locally-run `go run .` bot can
-      # reach Lavalink during development; the in-compose bot still uses lavalink:2333
-      - "127.0.0.1:2333:2333"
     volumes:
       - ./lavalink/application.yml:/opt/Lavalink/application.yml:ro
 
@@ -42,10 +42,7 @@ services:
     container_name: stt
     restart: unless-stopped
     environment:
-      - WHISPER_MODEL=small # bump to medium / large-v3 for better Russian accuracy
-    ports:
-      # host access so a locally-run `go run .` bot can reach it during dev
-      - "127.0.0.1:8002:8000"
+      - WHISPER_MODEL=base # bump to medium / large-v3 for better Russian accuracy
     volumes:
       - whisper-cache:/root/.cache # persist downloaded models across restarts
 

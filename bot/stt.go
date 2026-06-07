@@ -14,10 +14,10 @@ import (
 // the STT_URL env var (default http://localhost:8002 for local dev).
 var sttURL string
 
-// sttSem caps STT requests to one in flight. When the sidecar is busy, extra
-// utterances are dropped rather than queued, so a backlog can't build up and
-// spam "context deadline exceeded". Acquired in handleUtterance.
-var sttSem = make(chan struct{}, 1)
+// sttSem bounds how many STT requests can be in flight at once — a small buffer
+// so brief bursts aren't dropped. Beyond this, utterances are dropped rather
+// than queued, so a backlog can't build up and spam "context deadline exceeded".
+var sttSem = make(chan struct{}, 3)
 
 // transcribe sends one utterance's Opus frames to the STT sidecar and returns
 // the recognized text. Frames are serialized as [uint16 length][frame] repeated.

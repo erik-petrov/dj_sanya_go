@@ -49,6 +49,7 @@ func (b *Bot) setupEars() {
 	if sttURL == "" {
 		sttURL = "http://localhost:8002"
 	}
+	scBotAllowlist = parseBotAllowlist(os.Getenv("SC_BOT_ALLOWLIST"))
 	b.ears = s
 	log.Printf("ears session connected as %s; STT sidecar at %s", s.State.User.Username, sttURL)
 }
@@ -172,6 +173,12 @@ func (b *Bot) receiveLoop(l *earsListener) {
 // handleUtterance sends a finished utterance to the STT sidecar and logs the
 // transcript. Phase 1a: log only — command dispatch comes in Phase 1b.
 func (b *Bot) handleUtterance(guildID, voiceChannelID, userID string, ssrc uint32, frames [][]byte) {
+	// Drop audio from bots (e.g. our own music playback bleeding in) before
+	// spending any STT on it — except bots on the allowlist (the TTS bot).
+	if userID != "" && b.shouldIgnoreSpeaker(userID) {
+		return
+	}
+
 	// Only one STT request at a time; if the sidecar is busy, drop this
 	// utterance instead of queuing it (avoids a backlog of timing-out requests).
 	select {
@@ -190,9 +197,9 @@ func (b *Bot) handleUtterance(guildID, voiceChannelID, userID string, ssrc uint3
 	if text == "" {
 		return
 	}
-	who := userID
+	who := b.speakerInfo(userID).username
 	if who == "" {
-		who = fmt.Sprintf("ssrc %d", ssrc)
+		who = fmt.Sprintf("ssrc %d", ssrc) // no username (unmapped SSRC / lookup failed)
 	}
 	log.Printf("[stt] %s said: %q", who, text)
 
@@ -206,6 +213,12 @@ func (b *Bot) handleUtterance(guildID, voiceChannelID, userID string, ssrc uint3
 func (b *Bot) onListen(s *discordgo.Session, i *discordgo.InteractionCreate) {
 	if b.ears == nil {
 		respond(s, i, "Voice listening is disabled (no ears bot configured).")
+		return
+	}
+	// The ears bot is a separate application and must be invited to each server.
+	if _, err := b.ears.State.Guild(i.GuildID); err != nil {
+		invite := "https://discord.com/oauth2/authorize?client_id=" + b.ears.State.User.ID + "&scope=bot&permissions=1049600"
+		respond(s, i, "Войс-бот не добавлен на этот сервер. Добавьте его и повторите:\n"+invite)
 		return
 	}
 	vs, err := s.State.VoiceState(i.GuildID, i.Member.User.ID)

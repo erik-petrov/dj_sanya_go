@@ -226,8 +226,13 @@ func (b *Bot) setupCommands() {
 	}
 
 	b.s.AddHandler(func(s *discordgo.Session, i *discordgo.InteractionCreate) {
-		if h, ok := commandHandlers[i.ApplicationCommandData().Name]; ok {
-			h(s, i)
+		switch i.Type {
+		case discordgo.InteractionApplicationCommand:
+			if h, ok := commandHandlers[i.ApplicationCommandData().Name]; ok {
+				h(s, i)
+			}
+		case discordgo.InteractionMessageComponent:
+			b.onComponent(s, i)
 		}
 	})
 
@@ -235,18 +240,20 @@ func (b *Bot) setupCommands() {
 		log.Printf("Logged in as: %v#%v", s.State.User.Username, s.State.User.Discriminator)
 	})
 
+	// Leave voice automatically once no humans remain in the bot's channel.
+	b.s.AddHandler(b.onUserVoiceUpdate)
+
 	if b.guildID == "" {
 		log.Println("registering global slash commands (visible in every server; can take up to ~1h to propagate)")
 	} else {
 		log.Println("registering slash commands to guild", b.guildID)
 	}
 
-	registeredCommands := make([]*discordgo.ApplicationCommand, len(commands))
-	for i, v := range commands {
-		cmd, err := b.s.ApplicationCommandCreate(b.s.State.User.ID, b.guildID, v)
-		if err != nil {
-			log.Panicf("Cannot create '%v' command: %v", v.Name, err)
-		}
-		registeredCommands[i] = cmd
+	// Bulk-overwrite registers exactly this set (and prunes any stale commands)
+	// in a single call. With an empty guildID it targets the global scope, so
+	// the commands show up in every server the bot is in. Non-fatal: a transient
+	// failure shouldn't take the whole bot down.
+	if _, err := b.s.ApplicationCommandBulkOverwrite(b.s.State.User.ID, b.guildID, commands); err != nil {
+		log.Println("failed to register slash commands:", err)
 	}
 }

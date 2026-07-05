@@ -78,13 +78,10 @@ func (b *Bot) onRepeat(s *discordgo.Session, i *discordgo.InteractionCreate) {
 		respond(s, i, "Music is not available right now.")
 		return
 	}
-	queue := LavalinkQueues.Get(i.GuildID)
-	if queue.Type == QueueTypeRepeatTrack {
-		queue.Type = QueueTypeNormal
-		respond(s, i, "Stopped repeating!")
-	} else {
-		queue.Type = QueueTypeRepeatTrack
+	if b.ToggleRepeat(i.GuildID) {
 		respond(s, i, "Repeating currently playing track!")
+	} else {
+		respond(s, i, "Stopped repeating!")
 	}
 }
 

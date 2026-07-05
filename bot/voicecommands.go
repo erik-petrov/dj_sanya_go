@@ -15,9 +15,12 @@ var (
 	scNameStems  = []string{"сан", "тан", "зан"}                                                       // саня, сань, саню, саныч, ...
 	scPlayStems  = []string{"сыгра", "игра", "вруб", "включ", "постав", "запуст", "плей"} // сыграй, играй, врубай, включи, поставь, запусти
 	scSkipStems  = []string{"пропуст", "скип", "следующ", "дальше", "некст", "пропус"}              // пропусти, скип, следующая, дальше, некст
-	scStopStems  = []string{"стоп", "останов", "хват", "выключ"}                          // стоп, останови, хватит, выключи
-	scLeaveStems = []string{"уйд", "уход", "выйд", "покин", "отключ", "свал"}             // уйди, уходи, выйди, покинь, отключись, свали
+	scStopStems  = []string{"стоп", "останов", "хват", "выключ", "выруб"}                          // стоп, останови, хватит, выключи
+	scLeaveStems = []string{"уйд", "уход", "выйд", "покин", "отключ", "свал", "съеби"}             // уйди, уходи, выйди, покинь, отключись, свали
 )
+
+// scRepeatStems matches "repeat" verbs (повтори / зацикли / репит).
+var scRepeatStems = []string{"повтор", "зацикл", "репит"}
 
 type voiceIntent int
 
@@ -27,6 +30,7 @@ const (
 	intentSkip
 	intentStop
 	intentLeave
+	intentRepeat
 )
 
 // classifyVerb maps a token to a command intent (play is checked first).
@@ -38,6 +42,8 @@ func classifyVerb(tok string) voiceIntent {
 		return intentSkip
 	case hasAnyPrefix(tok, scStopStems):
 		return intentStop
+	case hasAnyPrefix(tok, scRepeatStems):
+		return intentRepeat
 	case hasAnyPrefix(tok, scLeaveStems):
 		return intentLeave
 	default:
@@ -139,12 +145,17 @@ func (b *Bot) handleVoiceCommand(guildID, voiceChannelID, userID, transcript str
 			report("⏹️ Остановлено")
 		}
 
+	case intentRepeat:
+		log.Printf("[voice] repeat (user %q)", userID)
+		if b.ToggleRepeat(guildID) {
+			report("🔁 Повтор текущего трека включён")
+		} else {
+			report("🔁 Повтор выключен")
+		}
+
 	case intentLeave:
 		log.Printf("[voice] leave (user %q)", userID)
-		_ = b.StopLavalink(guildID)
-		_ = b.stopListening(guildID)
-		announceChannels.Delete(guildID)
-		report("👋 Вышел из канала")
+		b.leaveVoice(guildID, "👋 Вышел из канала")
 	}
 
 	return true

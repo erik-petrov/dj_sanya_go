@@ -42,7 +42,9 @@ services:
     container_name: stt
     restart: unless-stopped
     environment:
-      - WHISPER_MODEL=base # bump to medium / large-v3 for better Russian accuracy
+      - STT_ENGINE=gigaam    # gigaam (Russian, CPU) | whisper (fallback)
+      - GIGAAM_MODEL=v2_ctc  # v2_ctc fastest; v3_ctc / v3_rnnt if your gigaam ships v3
+      - WHISPER_MODEL=base   # only used when STT_ENGINE=whisper
     volumes:
       - whisper-cache:/root/.cache # persist downloaded models across restarts
 
@@ -61,6 +63,7 @@ services:
       - LAVALINK_PASSWORD=youshallnotpass # must match server.password in application.yml
       - LAVALINK_SECURE=false
       - STT_URL=http://stt:8000
+      - SC_BOT_ALLOWLIST=TTS Bot#3590 # bots to still transcribe (id / name / name#disc, comma-sep); all other bots ignored
 
 volumes:
   whisper-cache:

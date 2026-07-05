@@ -5,6 +5,7 @@
 .git
 /.github
 lavalink/
+stt/
 logs/
 *.md
 Dockerfile

@@ -1,0 +1,9 @@
+#!/bin/sh
+# Ships gitignored secret/config files to the server before each push.
+# Enable once per clone with:
+#   git config core.hooksPath hooks
+#
+# </dev/null keeps the sync from consuming the ref list git feeds us on stdin.
+# The sync script always exits 0, so a sync hiccup never aborts your push.
+"$(git rev-parse --show-toplevel)/scripts/sync-secrets.sh" </dev/null
+exit 0

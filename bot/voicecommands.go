@@ -22,6 +22,11 @@ var (
 // scRepeatStems matches "repeat" verbs (повтори / зацикли / репит).
 var scRepeatStems = []string{"повтор", "зацикл", "репит"}
 
+// scEnglishStems marks a play query as English: the marker itself is dropped
+// and the rest is transliterated to Latin before searching. Covers "англ",
+// "по-английски", "на английском", "инглиш".
+var scEnglishStems = []string{"англ", "инглиш", "english"}
+
 type voiceIntent int
 
 const (
@@ -116,7 +121,25 @@ func (b *Bot) handleVoiceCommand(guildID, voiceChannelID, userID, transcript str
 
 	switch intent {
 	case intentPlay:
-		query := strings.TrimSpace(strings.Join(tokens[verbIdx+1:], " "))
+		// An "english" marker anywhere in the query means: drop the marker (and
+		// a dangling "на"/"по" before it) and transliterate the rest to Latin,
+		// since GigaAM renders English titles as Cyrillic phonetics.
+		var qTokens []string
+		english := false
+		for _, tok := range tokens[verbIdx+1:] {
+			if hasAnyPrefix(tok, scEnglishStems) {
+				english = true
+				if n := len(qTokens); n > 0 && (qTokens[n-1] == "на" || qTokens[n-1] == "по") {
+					qTokens = qTokens[:n-1]
+				}
+				continue
+			}
+			qTokens = append(qTokens, tok)
+		}
+		query := strings.TrimSpace(strings.Join(qTokens, " "))
+		if english {
+			query = anglicize(query)
+		}
 		if query == "" {
 			report("🎤 Что сыграть?")
 			return true

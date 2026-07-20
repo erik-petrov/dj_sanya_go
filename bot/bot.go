@@ -119,21 +119,7 @@ func (b *Bot) queue(s *discordgo.Session, i *discordgo.InteractionCreate) {
 		return
 	}
 
-	tracks := LavalinkQueues.Get(i.GuildID).List()
-	if len(tracks) == 0 {
-		respond(s, i, "Queue is empty")
-		return
-	}
-
-	var response string
-	for idx, track := range tracks {
-		uri := ""
-		if track.Info.URI != nil {
-			uri = *track.Info.URI
-		}
-		response += fmt.Sprintf("%d: [%s](%s)\n", idx+1, track.Info.Title, uri)
-	}
-	respond(s, i, "Current queue:\n"+response)
+	respond(s, i, queueText(i.GuildID))
 }
 
 func (b *Bot) setupCommands() {
@@ -165,6 +151,12 @@ func (b *Bot) setupCommands() {
 					Type:        discordgo.ApplicationCommandOptionAttachment,
 					Name:        "file",
 					Description: "music file",
+					Required:    false,
+				},
+				{
+					Type:        discordgo.ApplicationCommandOptionBoolean,
+					Name:        "deep",
+					Description: "choose the track from the top-10 search results",
 					Required:    false,
 				},
 			},

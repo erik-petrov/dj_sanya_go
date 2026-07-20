@@ -33,6 +33,10 @@ services:
       - yt-cipher
     environment:
       - _JAVA_OPTIONS=-Xmx1G # cap heap; raise if you see OOM
+      # LavaSrc reads these for Spotify/Deezer (interpolated from the repo-root .env).
+      - SPOTIFY_ID=${SPOTIFY_ID}
+      - SPOTIFY_SECRET=${SPOTIFY_SECRET}
+      - DEEZER_ARL=${DEEZER_ARL:-}
     volumes:
       - ./lavalink/application.yml:/opt/Lavalink/application.yml:ro
 

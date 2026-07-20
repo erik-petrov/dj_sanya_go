@@ -230,10 +230,16 @@ func nowPlayingMsg(t lavalink.Track) string {
 	return msg
 }
 
-// Custom IDs of the buttons on now-playing messages.
+// Custom IDs of the interactive controls on now-playing messages and the
+// deep-search picker.
 const (
-	skipButtonID   = "np_skip"
-	repeatButtonID = "np_repeat"
+	skipButtonID    = "np_skip"
+	repeatButtonID  = "np_repeat"
+	pauseButtonID   = "np_pause"
+	restartButtonID = "np_restart"
+	stopButtonID    = "np_stop"
+	queueButtonID   = "np_queue"
+	pickMenuID      = "np_pick"
 )
 
 // maxFileBytes caps the size of an uploaded file we'll try to play; larger ones
@@ -267,30 +273,34 @@ func trackURI(t lavalink.Track) string {
 // now-playing message: Skip and Repeat. The Repeat button carries the track's
 // URI so it can replay the song when clicked after playback has finished.
 func nowPlayingComponents(t lavalink.Track) []discordgo.MessageComponent {
-	repeatID := repeatButtonID
+	// Repeat/Restart need to know which track their message is about: embed the
+	// URI in the custom ID when it fits the 100-char cap (measured against the
+	// longest prefix), else stash it under a short token.
+	payload := ""
 	if uri := trackURI(t); uri != "" {
-		if id := repeatButtonID + ":" + uri; len(id) <= 100 {
-			repeatID = id // short URI (YouTube etc.): embed directly, stateless
+		if len(restartButtonID)+1+len(uri) <= 100 {
+			payload = ":" + uri // short URI (YouTube etc.): embed directly, stateless
 		} else {
 			// Long URI (e.g. an uploaded file's signed CDN URL): stash it under a
 			// short token so the button stays within Discord's 100-char cap.
 			tok := strconv.FormatUint(repeatCounter.Add(1), 36)
 			repeatStore.Store(tok, repeatTrack{identifier: uri, displayName: t.Info.Title})
-			repeatID = repeatButtonID + ":#" + tok
+			payload = ":#" + tok
 		}
+	}
+	btn := func(label, id string) discordgo.Button {
+		return discordgo.Button{Label: label, Style: discordgo.SecondaryButton, CustomID: id}
 	}
 	return []discordgo.MessageComponent{
 		discordgo.ActionsRow{Components: []discordgo.MessageComponent{
-			discordgo.Button{
-				Label:    "Skip ⏭️",
-				Style:    discordgo.SecondaryButton,
-				CustomID: skipButtonID,
-			},
-			discordgo.Button{
-				Label:    "Repeat 🔁",
-				Style:    discordgo.SecondaryButton,
-				CustomID: repeatID,
-			},
+			btn("Pause ⏸️", pauseButtonID),
+			btn("Skip ⏭️", skipButtonID),
+			btn("Repeat 🔁", repeatButtonID+payload),
+		}},
+		discordgo.ActionsRow{Components: []discordgo.MessageComponent{
+			btn("Restart ⏮️", restartButtonID+payload),
+			btn("Stop ⏹️", stopButtonID),
+			btn("Queue 📋", queueButtonID),
 		}},
 	}
 }
@@ -308,46 +318,75 @@ func (b *Bot) sendNowPlaying(guildID string, t lavalink.Track) {
 	})
 }
 
-// onComponent handles message-component interactions: the now-playing Skip and
-// Repeat buttons.
+// onComponent routes message-component interactions: the now-playing buttons
+// and the deep-search picker. Most handlers just ack the click; pause and the
+// picker instead respond by editing the clicked message, so they self-ack.
 func (b *Bot) onComponent(s *discordgo.Session, i *discordgo.InteractionCreate) {
-	// Acknowledge the click without changing the clicked message.
-	_ = s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
-		Type: discordgo.InteractionResponseDeferredMessageUpdate,
-	})
+	customID := i.MessageComponentData().CustomID
+	name, payload, _ := strings.Cut(customID, ":")
+
+	ack := func() {
+		_ = s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
+			Type: discordgo.InteractionResponseDeferredMessageUpdate,
+		})
+	}
+
 	if LavalinkClient == nil {
+		ack()
 		return
 	}
-	customID := i.MessageComponentData().CustomID
-	switch {
-	case customID == skipButtonID:
+
+	switch name {
+	case skipButtonID:
+		ack()
 		if err := b.SkipLavalink(i.GuildID); err != nil {
 			b.ephemeralFollowup(s, i, "Сейчас нечего пропускать.")
 		}
-	case strings.HasPrefix(customID, repeatButtonID):
-		b.onRepeatButton(s, i, customID)
+	case repeatButtonID:
+		ack()
+		b.onRepeatButton(s, i, payload)
+	case restartButtonID:
+		ack()
+		b.onRestartButton(s, i, payload)
+	case stopButtonID:
+		ack()
+		if err := b.StopLavalink(i.GuildID); err != nil {
+			b.ephemeralFollowup(s, i, "Не получилось остановить: "+err.Error())
+		} else {
+			b.ephemeralFollowup(s, i, "⏹️ Остановлено")
+		}
+	case queueButtonID:
+		ack()
+		b.ephemeralFollowup(s, i, queueText(i.GuildID))
+	case pauseButtonID:
+		b.onPauseButton(s, i)
+	case pickMenuID:
+		b.onPickMenu(s, i, payload)
+	default:
+		ack()
 	}
+}
+
+// resolveRepeatPayload turns a Repeat/Restart button payload — a track URI, or
+// "#token" into repeatStore for long URIs — into a playable identifier plus an
+// optional display-name override (uploaded files keep their filename).
+func resolveRepeatPayload(payload string) (identifier, displayName string) {
+	if tok, isToken := strings.CutPrefix(payload, "#"); isToken {
+		if v, found := repeatStore.Load(tok); found {
+			rt := v.(repeatTrack)
+			return rt.identifier, rt.displayName
+		}
+		return "", ""
+	}
+	return payload, ""
 }
 
 // onRepeatButton handles the now-playing Repeat button. If the song this button
 // belongs to is the one currently playing, it toggles single-track repeat.
 // Otherwise (a different song is playing, or playback has finished) it plays the
 // button's song now — or queues it behind whatever is currently playing.
-func (b *Bot) onRepeatButton(s *discordgo.Session, i *discordgo.InteractionCreate, customID string) {
-	payload, ok := strings.CutPrefix(customID, repeatButtonID+":")
-	if !ok {
-		payload = ""
-	}
-	// A "#"-prefixed payload is a token into repeatStore (long/file URIs);
-	// anything else is the track's URI embedded directly.
-	identifier, displayName := payload, ""
-	if tok, isToken := strings.CutPrefix(payload, "#"); isToken {
-		identifier = ""
-		if v, found := repeatStore.Load(tok); found {
-			rt := v.(repeatTrack)
-			identifier, displayName = rt.identifier, rt.displayName
-		}
-	}
+func (b *Bot) onRepeatButton(s *discordgo.Session, i *discordgo.InteractionCreate, payload string) {
+	identifier, displayName := resolveRepeatPayload(payload)
 
 	// Toggle repeat only when THIS button's song is the current track.
 	if identifier != "" && identifier == b.currentTrackURI(i.GuildID) {
@@ -376,6 +415,253 @@ func (b *Bot) onRepeatButton(s *discordgo.Session, i *discordgo.InteractionCreat
 		return
 	}
 	go b.loadAndPlay(i.GuildID, ch, identifier, displayName, func(m string) { b.ephemeralFollowup(s, i, m) })
+}
+
+// onRestartButton seeks the current track back to 0:00 — only when the clicked
+// message's track is the one actually playing.
+func (b *Bot) onRestartButton(s *discordgo.Session, i *discordgo.InteractionCreate, payload string) {
+	identifier, _ := resolveRepeatPayload(payload)
+	if identifier == "" || identifier != b.currentTrackURI(i.GuildID) {
+		b.ephemeralFollowup(s, i, "Этот трек сейчас не играет.")
+		return
+	}
+	player := LavalinkClient.ExistingPlayer(snowflake.MustParse(i.GuildID))
+	if player == nil {
+		b.ephemeralFollowup(s, i, "Сейчас ничего не играет.")
+		return
+	}
+	if err := player.Update(context.TODO(), lavalink.WithPosition(0)); err != nil {
+		b.ephemeralFollowup(s, i, "Не получилось перемотать: "+err.Error())
+		return
+	}
+	b.ephemeralFollowup(s, i, "⏮️ Сначала")
+}
+
+// onPauseButton toggles pause and flips the clicked message's button label
+// between "Pause ⏸️" and "Resume ▶️" via an in-place message update.
+func (b *Bot) onPauseButton(s *discordgo.Session, i *discordgo.InteractionCreate) {
+	ack := func() {
+		_ = s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
+			Type: discordgo.InteractionResponseDeferredMessageUpdate,
+		})
+	}
+	player := LavalinkClient.ExistingPlayer(snowflake.MustParse(i.GuildID))
+	if player == nil || player.Track() == nil {
+		ack()
+		b.ephemeralFollowup(s, i, "Сейчас ничего не играет.")
+		return
+	}
+	paused := !player.Paused()
+	if err := player.Update(context.TODO(), lavalink.WithPaused(paused)); err != nil {
+		ack()
+		b.ephemeralFollowup(s, i, "Не получилось: "+err.Error())
+		return
+	}
+	if err := s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
+		Type: discordgo.InteractionResponseUpdateMessage,
+		Data: &discordgo.InteractionResponseData{
+			Content:    i.Message.Content,
+			Components: flipPauseLabel(i.Message.Components, paused),
+		},
+	}); err != nil {
+		log.Println("error updating pause button:", err)
+	}
+}
+
+// flipPauseLabel returns the message's components with the pause button's label
+// reflecting the new paused state. Components from a received message are
+// pointers, so mutating in place is safe here.
+func flipPauseLabel(components []discordgo.MessageComponent, paused bool) []discordgo.MessageComponent {
+	label := "Pause ⏸️"
+	if paused {
+		label = "Resume ▶️"
+	}
+	for _, c := range components {
+		row, ok := c.(*discordgo.ActionsRow)
+		if !ok {
+			continue
+		}
+		for _, rc := range row.Components {
+			if btn, ok := rc.(*discordgo.Button); ok && btn.CustomID == pauseButtonID {
+				btn.Label = label
+			}
+		}
+	}
+	return components
+}
+
+// queueText renders the guild's queue, shared by /queue and the Queue button.
+func queueText(guildID string) string {
+	tracks := LavalinkQueues.Get(guildID).List()
+	if len(tracks) == 0 {
+		return "Queue is empty"
+	}
+	out := "Current queue:\n"
+	for idx, track := range tracks {
+		uri := ""
+		if track.Info.URI != nil {
+			uri = *track.Info.URI
+		}
+		out += fmt.Sprintf("%d: [%s](%s)\n", idx+1, track.Info.Title, uri)
+	}
+	return out
+}
+
+// pickSession holds one deep-search's results while the requester chooses.
+type pickSession struct {
+	tracks         []lavalink.Track
+	voiceChannelID string
+}
+
+var searchPicks sync.Map // token(string) -> pickSession
+
+// deepSearch handles /play with deep:true — instead of auto-playing the first
+// hit, it shows the requester an ephemeral dropdown of the top-10 results.
+// Searches the raw query (no "песня lyrics" bias): the user picks manually.
+func (b *Bot) deepSearch(s *discordgo.Session, i *discordgo.InteractionCreate, query, voiceChannelID string) {
+	if err := s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
+		Type: discordgo.InteractionResponseDeferredChannelMessageWithSource,
+		Data: &discordgo.InteractionResponseData{Flags: discordgo.MessageFlagsEphemeral},
+	}); err != nil {
+		log.Println("error deferring deep search:", err)
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	var results []lavalink.Track
+	loadErr := ""
+	LavalinkClient.BestNode().LoadTracksHandler(ctx, lavalink.SearchTypeYouTube.Apply(query), disgolink.NewResultHandler(
+		func(track lavalink.Track) { results = []lavalink.Track{track} },
+		func(playlist lavalink.Playlist) { results = playlist.Tracks },
+		func(tracks []lavalink.Track) { results = tracks },
+		func() {},
+		func(err error) { loadErr = err.Error() },
+	))
+	if loadErr != "" {
+		editInteraction(s, i, "Error while looking up query: `"+loadErr+"`")
+		return
+	}
+	if len(results) == 0 {
+		editInteraction(s, i, "Nothing found for: `"+query+"`")
+		return
+	}
+	if len(results) > 10 {
+		results = results[:10]
+	}
+
+	tok := strconv.FormatUint(repeatCounter.Add(1), 36)
+	searchPicks.Store(tok, pickSession{tracks: results, voiceChannelID: voiceChannelID})
+
+	opts := make([]discordgo.SelectMenuOption, len(results))
+	for idx, t := range results {
+		opts[idx] = discordgo.SelectMenuOption{
+			Label:       truncate(fmt.Sprintf("%d. %s", idx+1, t.Info.Title), 100),
+			Value:       strconv.Itoa(idx),
+			Description: truncate(t.Info.Author+" · "+fmtDuration(t.Info.Length), 100),
+		}
+	}
+	content := fmt.Sprintf("🔎 Топ-%d по запросу `%s`:", len(results), query)
+	comps := []discordgo.MessageComponent{discordgo.ActionsRow{Components: []discordgo.MessageComponent{
+		discordgo.SelectMenu{
+			MenuType:    discordgo.StringSelectMenu,
+			CustomID:    pickMenuID + ":" + tok,
+			Placeholder: "Выбери трек",
+			Options:     opts,
+		},
+	}}}
+	if _, err := s.InteractionResponseEdit(i.Interaction, &discordgo.WebhookEdit{
+		Content:    &content,
+		Components: &comps,
+	}); err != nil {
+		log.Println("error sending deep-search menu:", err)
+	}
+}
+
+// onPickMenu handles a deep-search dropdown selection: replaces the picker with
+// a confirmation and plays or queues the chosen track.
+func (b *Bot) onPickMenu(s *discordgo.Session, i *discordgo.InteractionCreate, token string) {
+	expired := func() {
+		_ = s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
+			Type: discordgo.InteractionResponseUpdateMessage,
+			Data: &discordgo.InteractionResponseData{
+				Content:    "Выбор устарел — запусти `/play` с deep ещё раз.",
+				Components: []discordgo.MessageComponent{},
+			},
+		})
+	}
+
+	v, found := searchPicks.LoadAndDelete(token)
+	values := i.MessageComponentData().Values
+	if !found || len(values) == 0 {
+		expired()
+		return
+	}
+	ps := v.(pickSession)
+	idx, err := strconv.Atoi(values[0])
+	if err != nil || idx < 0 || idx >= len(ps.tracks) {
+		expired()
+		return
+	}
+	track := ps.tracks[idx]
+
+	_ = s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
+		Type: discordgo.InteractionResponseUpdateMessage,
+		Data: &discordgo.InteractionResponseData{
+			Content:    "✅ Выбрано: `" + track.Info.Title + "`",
+			Components: []discordgo.MessageComponent{},
+		},
+	})
+
+	announceID := ""
+	if ch, ok := announceChannels.Load(i.GuildID); ok {
+		announceID, _ = ch.(string)
+	}
+	report := func(m string) {
+		if announceID != "" {
+			_, _ = b.s.ChannelMessageSend(announceID, m)
+		}
+	}
+	go b.startOrQueue(i.GuildID, ps.voiceChannelID, track, report)
+}
+
+// startOrQueue plays an already-resolved track immediately (joining voice) when
+// nothing is playing, or appends it to the queue otherwise.
+func (b *Bot) startOrQueue(guildID, voiceChannelID string, track lavalink.Track, report func(string)) {
+	player := GetOrCreatePlayer(guildID)
+	if player == nil {
+		report("Music is not available right now.")
+		return
+	}
+	if player.Track() != nil {
+		LavalinkQueues.Get(guildID).Add(track)
+		report("Добавил в очередь: `" + track.Info.Title + "`")
+		return
+	}
+	if err := b.s.ChannelVoiceJoinManual(guildID, voiceChannelID, false, true); err != nil {
+		report("Error joining voice channel: " + err.Error())
+		return
+	}
+	if err := player.Update(context.TODO(), lavalink.WithTrack(track)); err != nil {
+		report("Error playing track: " + err.Error())
+		return
+	}
+	b.sendNowPlaying(guildID, track)
+}
+
+// truncate caps a string at max runes (Discord limits labels to 100).
+func truncate(s string, max int) string {
+	r := []rune(s)
+	if len(r) <= max {
+		return s
+	}
+	return string(r[:max-1]) + "…"
+}
+
+// fmtDuration renders a track length as m:ss.
+func fmtDuration(d lavalink.Duration) string {
+	return fmt.Sprintf("%d:%02d", d.Minutes(), d.SecondsPart())
 }
 
 // currentTrackURI returns the URI of the track the guild's player is currently
@@ -511,7 +797,7 @@ func (b *Bot) onPlay(s *discordgo.Session, i *discordgo.InteractionCreate) {
 
 	announceChannels.Store(i.GuildID, i.ChannelID)
 
-	identifier, displayName, ok := b.resolveIdentifier(s, i)
+	identifier, displayName, rawQuery, deep, ok := b.resolveIdentifier(s, i)
 	if !ok {
 		return
 	}
@@ -523,6 +809,13 @@ func (b *Bot) onPlay(s *discordgo.Session, i *discordgo.InteractionCreate) {
 		return
 	}
 
+	// deep:true on a text query → let the user pick from the top-10 instead of
+	// auto-playing the first hit.
+	if deep && rawQuery != "" {
+		b.deepSearch(s, i, rawQuery, voiceState.ChannelID)
+		return
+	}
+
 	if err := s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
 		Type: discordgo.InteractionResponseDeferredChannelMessageWithSource,
 	}); err != nil {
@@ -530,16 +823,35 @@ func (b *Bot) onPlay(s *discordgo.Session, i *discordgo.InteractionCreate) {
 		return
 	}
 
-	b.loadAndPlay(i.GuildID, voiceState.ChannelID, identifier, displayName, func(m string) {
+	b.playWithFallback(i.GuildID, voiceState.ChannelID, identifier, displayName, rawQuery, func(m string) {
 		editInteraction(s, i, m)
 	})
+}
+
+// playWithFallback plays identifier and, when a Cyrillic free-text query found
+// nothing, retries once with the query transliterated to Latin — spoken English
+// titles come out of the Russian STT as Cyrillic phonetics.
+func (b *Bot) playWithFallback(guildID, voiceChannelID, identifier, displayName, rawQuery string, report func(string)) {
+	if !b.loadAndPlay(guildID, voiceChannelID, identifier, displayName, report) {
+		return
+	}
+	if rawQuery == "" || !hasCyrillic(rawQuery) {
+		return
+	}
+	latin := anglicize(rawQuery)
+	report("🔎 Пробую латиницей: `" + latin + "`")
+	id, err := queryToIdentifier(latin)
+	if err != nil {
+		return
+	}
+	b.loadAndPlay(guildID, voiceChannelID, id, displayName, report)
 }
 
 // loadAndPlay resolves an identifier on the Lavalink node and either starts it
 // (if nothing is playing) or queues it. Status goes through the report callback
 // so the slash command (interaction edit) and the voice command (channel
 // message) share this core. Caller must have checked LavalinkClient != nil.
-func (b *Bot) loadAndPlay(guildID, voiceChannelID, identifier, displayName string, report func(string)) {
+func (b *Bot) loadAndPlay(guildID, voiceChannelID, identifier, displayName string, report func(string)) (notFound bool) {
 	player := GetOrCreatePlayer(guildID)
 	queue := LavalinkQueues.Get(guildID)
 
@@ -578,6 +890,7 @@ func (b *Bot) loadAndPlay(guildID, voiceChannelID, identifier, displayName strin
 		},
 		func() {
 			report("Nothing found for: `" + identifier + "`")
+			notFound = true
 		},
 		func(err error) {
 			report("Error while looking up query: `" + err.Error() + "`")
@@ -600,6 +913,7 @@ func (b *Bot) loadAndPlay(guildID, voiceChannelID, identifier, displayName strin
 	}
 
 	b.sendNowPlaying(guildID, *toPlay)
+	return
 }
 
 // playQuery is the non-interaction entry point used by voice commands: resolve
@@ -627,13 +941,13 @@ func (b *Bot) playQuery(guildID, voiceChannelID, query, announceChannelID string
 		return
 	}
 
-	b.loadAndPlay(guildID, voiceChannelID, identifier, "", report)
+	b.playWithFallback(guildID, voiceChannelID, identifier, "", query, report)
 }
 
 // resolveIdentifier turns the /play options (a query string or an uploaded
 // file) into a Lavalink identifier. It reports false (after responding to the
 // user) when no usable input was given.
-func (b *Bot) resolveIdentifier(s *discordgo.Session, i *discordgo.InteractionCreate) (identifier, displayName string, ok bool) {
+func (b *Bot) resolveIdentifier(s *discordgo.Session, i *discordgo.InteractionCreate) (identifier, displayName, rawQuery string, deep, ok bool) {
 	data := i.ApplicationCommandData()
 
 	var query string
@@ -642,6 +956,8 @@ func (b *Bot) resolveIdentifier(s *discordgo.Session, i *discordgo.InteractionCr
 		switch opt.Name {
 		case "query":
 			query = opt.StringValue()
+		case "deep":
+			deep = opt.BoolValue()
 		case "file":
 			if id, ok := opt.Value.(string); ok {
 				if f, ok := data.Resolved.Attachments[id]; ok {
@@ -656,18 +972,18 @@ func (b *Bot) resolveIdentifier(s *discordgo.Session, i *discordgo.InteractionCr
 		id, err := queryToIdentifier(query)
 		if err != nil {
 			respond(s, i, "Something went wrong: "+err.Error())
-			return "", "", false
+			return "", "", "", false, false
 		}
-		return id, "", true
+		return id, "", query, deep, true
 	case file != nil:
 		if file.Size > maxFileBytes {
 			respond(s, i, fmt.Sprintf("Файл слишком большой: %d МБ (максимум %d МБ).", file.Size>>20, maxFileBytes>>20))
-			return "", "", false
+			return "", "", "", false, false
 		}
-		return file.URL, file.Filename, true
+		return file.URL, file.Filename, "", false, true
 	default:
 		respond(s, i, "No music data given")
-		return "", "", false
+		return "", "", "", false, false
 	}
 }
 
@@ -677,22 +993,19 @@ func (b *Bot) resolveIdentifier(s *discordgo.Session, i *discordgo.InteractionCr
 const searchSuffix = " lyrics"
 
 // queryToIdentifier turns a raw query (typed or spoken) into a Lavalink
-// identifier: Spotify links become a YouTube search, URLs and "xxsearch:"
-// queries pass through, everything else becomes a YouTube search.
+// identifier: URLs (YouTube, Spotify, SoundCloud, Deezer, ...) and explicit
+// "xxsearch:" prefixes pass straight through — Lavalink resolves them via the
+// youtube / LavaSrc / native SoundCloud sources — while plain text becomes a
+// YouTube search.
 func queryToIdentifier(query string) (string, error) {
-	if checkSubstrings(query, "open.spotify", "spotify.com") {
-		song, err := getSpotifyLinkName(query)
-		if err != nil {
-			return "", err
-		}
-		search := song.Name
-		if len(song.Artist) > 0 {
-			search += " " + song.Artist[0].Name + " lyrics"
-		}
-		return lavalink.SearchTypeYouTube.Apply(search), nil
-	}
 	if urlPattern.MatchString(query) || searchPattern.MatchString(query) {
 		return query, nil
 	}
-	return lavalink.SearchTypeYouTube.Apply(query + searchSuffix), nil
+	// Cyrillic queries get the Russian-flavoured suffix; pure-Latin ones (typed
+	// English, or an anglicized retry) get a plain " lyrics".
+	suffix := searchSuffix
+	if !hasCyrillic(query) {
+		suffix = " lyrics"
+	}
+	return lavalink.SearchTypeYouTube.Apply(query + suffix), nil
 }

@@ -1,48 +1,14 @@
 package bot
 
 import (
-	"bytes"
-	"encoding/base64"
-	"encoding/json"
 	"errors"
-	"io"
 	"log"
-	"net/http"
-	"net/url"
-	"os"
 	"slices"
 	"sort"
-	"strings"
 	"time"
 
 	"github.com/bwmarrin/discordgo"
 )
-
-var spotifyBearer string
-
-type SpotifyResponse struct {
-	Token string `json:"access_token"`
-}
-
-type Artist struct {
-	Link string `json:"href"`
-	Name string `json:"name"`
-}
-
-type Album struct {
-	Image []struct {
-		URL string `json:"url"`
-	} `json:"images"`
-	Name string `json:"name"`
-	URL  string `json:"href"`
-	Date string `json:"release_date"`
-}
-
-type SpotifySong struct {
-	Artist []Artist `json:"artists"`
-	Name   string   `json:"name"`
-	Album  Album    `json:"album"`
-}
 
 func (b *Bot) onStop(s *discordgo.Session, i *discordgo.InteractionCreate) {
 	if LavalinkClient == nil {
@@ -179,15 +145,6 @@ func (b *Bot) wakeUp(s *discordgo.Session, i *discordgo.InteractionCreate) {
 	})
 }
 
-func checkSubstrings(str string, subs ...string) bool {
-	for _, sub := range subs {
-		if strings.Contains(str, sub) {
-			return true
-		}
-	}
-	return false
-}
-
 func editInteraction(s *discordgo.Session, i *discordgo.InteractionCreate, msg string) {
 	s.InteractionResponseEdit(i.Interaction, &discordgo.WebhookEdit{
 		Content: &msg,
@@ -201,104 +158,4 @@ func findUserVoiceState(userid string, guild *discordgo.Guild) (*discordgo.Voice
 		}
 	}
 	return nil, errors.New("could not find user's voice state")
-}
-
-func getSpotifyLinkName(link string) (SpotifySong, error) {
-	spotifyBearer, err := getSpotifyBearer()
-
-	if err != nil {
-		return SpotifySong{}, err
-	}
-
-	id := strings.Split(link[strings.LastIndex(link, "/")+1:], "?")[0]
-
-	h := http.Header{}
-	h.Add("Authorization", "Bearer "+spotifyBearer)
-
-	url, _ := url.Parse("https://api.spotify.com/v1/tracks/" + id)
-
-	req := http.Request{
-		URL:    url,
-		Method: http.MethodGet,
-		Header: h,
-	}
-
-	res, err := http.DefaultClient.Do(&req)
-
-	if err != nil {
-		log.Println("Error while making HTTP request for spotify song: ", err)
-		return SpotifySong{}, err
-	}
-
-	resBody, err := io.ReadAll(res.Body)
-
-	if err != nil {
-		log.Println("Error while making taking body out of the spotify song request: ", err)
-		return SpotifySong{}, err
-	}
-
-	var sp SpotifySong
-	err = json.Unmarshal(resBody, &sp)
-
-	if err != nil {
-		log.Println("Error while unmarshaling spotify song data: ", err)
-		return SpotifySong{}, err
-	}
-
-	return sp, nil
-}
-
-func getSpotifyBearer() (string, error) {
-	if !tokenExpired() {
-		return spotifyBearer, nil
-	}
-
-	values := url.Values{}
-	values.Add("grant_type", "client_credentials")
-
-	req, err := http.NewRequest("POST", "https://accounts.spotify.com/api/token", bytes.NewBufferString(values.Encode()))
-	if err != nil {
-		log.Println("error making a request: ", err)
-		return "", err
-	}
-	req.Header.Add("Authorization", "Basic "+base64.StdEncoding.EncodeToString([]byte(os.Getenv("SPOTIFY_ID")+":"+os.Getenv("SPOTIFY_SECRET"))))
-	req.Header.Add("Content-Type", "application/x-www-form-urlencoded")
-
-	res, err := http.DefaultClient.Do(req)
-	if err != nil {
-		log.Println("error getting spotify bearer link: ", err)
-		return "", err
-	}
-
-	if res.StatusCode != 200 {
-		body, _ := io.ReadAll(res.Body)
-		return "", errors.New(string(body))
-	}
-
-	var response SpotifyResponse
-	body, _ := io.ReadAll(res.Body)
-	json.Unmarshal(body, &response)
-	return response.Token, nil
-}
-
-func tokenExpired() bool {
-	h := http.Header{}
-	h.Add("Authorization", "Bearer "+spotifyBearer)
-
-	cl := &http.Client{}
-	url, _ := url.Parse("https://api.spotify.com/v1/search?q=+skibidi&type=track")
-	req := &http.Request{
-		Header: h,
-		Method: http.MethodGet,
-		URL:    url,
-	}
-
-	res, err := cl.Do(req)
-
-	if err != nil {
-		log.Println("error checking link expiry")
-		return true
-	}
-
-	return res.StatusCode != 200
 }

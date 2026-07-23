@@ -157,12 +157,15 @@ func (b *Bot) setupLavalink() {
 	}
 	secure, _ := strconv.ParseBool(os.Getenv("LAVALINK_SECURE"))
 
-	// Retry the initial connection so we tolerate Lavalink still booting (e.g.
-	// when both containers start together under docker-compose). Only fall back
-	// to the legacy player if it never comes up.
+	// Retry the initial connection so we tolerate Lavalink still booting when
+	// both containers start together under docker-compose. A cold start that
+	// downloads plugins (e.g. LavaSrc) can take a couple of minutes — well past
+	// the container being "up" — so keep trying for a few minutes before falling
+	// back to the legacy player.
 	connected := false
-	for attempt := 1; attempt <= 20; attempt++ {
-		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	deadline := time.Now().Add(3 * time.Minute)
+	for attempt := 1; ; attempt++ {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		_, err := client.AddNode(ctx, disgolink.NodeConfig{
 			Name:     "main",
 			Address:  address,
@@ -174,12 +177,15 @@ func (b *Bot) setupLavalink() {
 			connected = true
 			break
 		}
-		log.Printf("Lavalink connection attempt %d/20 failed: %v", attempt, err)
+		log.Printf("Lavalink connection attempt %d failed: %v", attempt, err)
 		client.RemoveNode("main")
-		time.Sleep(2 * time.Second)
+		if time.Now().After(deadline) {
+			break
+		}
+		time.Sleep(3 * time.Second)
 	}
 	if !connected {
-		log.Println("could not connect to Lavalink node; using legacy player")
+		log.Println("could not connect to Lavalink node after 3m; using legacy player")
 		return
 	}
 

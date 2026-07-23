@@ -1,0 +1,15 @@
+{
+  "manifest_version": 3,
+  "name": "Sanya Play",
+  "version": "1.0.0",
+  "description": "Play the current YouTube video through the Sanya Discord bot via its webhook.",
+  "permissions": ["activeTab", "storage"],
+  "host_permissions": [
+    "https://discord.com/*",
+    "https://discordapp.com/*"
+  ],
+  "action": {
+    "default_popup": "popup.html",
+    "default_title": "Sanya Play"
+  }
+}

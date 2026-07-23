@@ -35,6 +35,13 @@ func New(boot Boot) (*Bot, error) {
 	// Lavalink needs the voice state/server gateway events and a cached voice
 	// state so we can find which channel the requesting user is in.
 	s.Identify.Intents |= discordgo.IntentsGuildVoiceStates
+	// The play-hook reads webhook message text, which needs the privileged
+	// Message Content intent (plus Guild Messages). Only request them when the
+	// hook is enabled — asking for a privileged intent that isn't enabled in the
+	// Developer Portal makes the gateway reject our login.
+	if hookEnabled() {
+		s.Identify.Intents |= discordgo.IntentsGuildMessages | discordgo.IntentMessageContent
+	}
 	s.State.TrackVoice = true
 	return &Bot{s: s, guildID: boot.GuildID, earsToken: boot.EarsToken, ytToken: boot.YtToken, sfToken: boot.SfToken, sfSecret: boot.SfSecret}, nil
 }
@@ -46,6 +53,7 @@ func (b *Bot) Start() error {
 	b.setupLavalink()
 	b.setupEars()
 	b.setupCommands()
+	b.setupHook()
 	b.sirusParsing()
 	return nil
 }

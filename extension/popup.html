@@ -1,0 +1,72 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <style>
+      body {
+        font: 13px/1.4 system-ui, sans-serif;
+        width: 300px;
+        margin: 0;
+        padding: 12px;
+      }
+      h1 {
+        font-size: 14px;
+        margin: 0 0 8px;
+      }
+      label {
+        display: block;
+        margin: 8px 0 2px;
+        font-weight: 600;
+      }
+      input {
+        width: 100%;
+        box-sizing: border-box;
+        padding: 6px;
+      }
+      button {
+        width: 100%;
+        padding: 8px;
+        margin-top: 10px;
+        cursor: pointer;
+      }
+      #play {
+        font-size: 15px;
+        font-weight: 700;
+      }
+      #status {
+        margin-top: 8px;
+        min-height: 16px;
+      }
+      details {
+        margin-top: 10px;
+      }
+      summary {
+        cursor: pointer;
+      }
+      .ok {
+        color: #128a12;
+      }
+      .err {
+        color: #c00;
+      }
+    </style>
+  </head>
+  <body>
+    <h1>▶ Sanya Play</h1>
+    <button id="play">Play this video</button>
+    <div id="status"></div>
+
+    <details id="settings">
+      <summary>Settings</summary>
+      <label for="webhook">Discord webhook URL</label>
+      <input id="webhook" type="url" placeholder="https://discord.com/api/webhooks/..." />
+      <label for="password">Password</label>
+      <input id="password" type="password" placeholder="shared secret" />
+      <label for="userid">Your Discord user ID</label>
+      <input id="userid" type="text" placeholder="123456789012345678" />
+      <button id="save">Save settings</button>
+    </details>
+
+    <script src="popup.js"></script>
+  </body>
+</html>

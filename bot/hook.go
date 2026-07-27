@@ -72,6 +72,11 @@ func (b *Bot) onHookMessage(s *discordgo.Session, m *discordgo.MessageCreate) {
 
 	reply := func(msg string) { _, _ = s.ChannelMessageSend(m.ChannelID, msg) }
 
+	if isBanned(userID) {
+		reply("<@" + userID + "> забанен и не может использовать бота.")
+		return
+	}
+
 	guildID, channelID, ok := b.findUserVoiceAnywhere(userID)
 	if !ok {
 		reply("<@" + userID + "> не в голосовом канале — нечего воспроизводить.")

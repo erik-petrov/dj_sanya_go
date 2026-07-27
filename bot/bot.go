@@ -47,6 +47,7 @@ func New(boot Boot) (*Bot, error) {
 }
 
 func (b *Bot) Start() error {
+	loadBans()
 	if err := b.s.Open(); err != nil {
 		return err
 	}
@@ -201,6 +202,32 @@ func (b *Bot) setupCommands() {
 			Name:        "unlisten",
 			Description: "Stop listening and leave the voice channel.",
 		},
+		{
+			Name:                     "ban",
+			Description:              "Ban a user from using the bot (owner only).",
+			DefaultMemberPermissions: &adminOnlyPerm,
+			Options: []*discordgo.ApplicationCommandOption{
+				{
+					Type:        discordgo.ApplicationCommandOptionUser,
+					Name:        "user",
+					Description: "User to ban",
+					Required:    true,
+				},
+			},
+		},
+		{
+			Name:                     "unban",
+			Description:              "Unban a user (owner only).",
+			DefaultMemberPermissions: &adminOnlyPerm,
+			Options: []*discordgo.ApplicationCommandOption{
+				{
+					Type:        discordgo.ApplicationCommandOptionUser,
+					Name:        "user",
+					Description: "User to unban",
+					Required:    true,
+				},
+			},
+		},
 	}
 
 	commandHandlers := map[string]func(s *discordgo.Session, i *discordgo.InteractionCreate){
@@ -223,9 +250,18 @@ func (b *Bot) setupCommands() {
 		"listen": b.onListen,
 
 		"unlisten": b.onUnlisten,
+
+		"ban": b.onBan,
+
+		"unban": b.onUnban,
 	}
 
 	b.s.AddHandler(func(s *discordgo.Session, i *discordgo.InteractionCreate) {
+		// Banned users can't use anything — commands or buttons.
+		if uid := interactionUserID(i); uid != "" && isBanned(uid) {
+			denyBanned(s, i)
+			return
+		}
 		switch i.Type {
 		case discordgo.InteractionApplicationCommand:
 			if h, ok := commandHandlers[i.ApplicationCommandData().Name]; ok {

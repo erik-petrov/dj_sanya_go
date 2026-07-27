@@ -80,6 +80,9 @@ func hasAnyPrefix(tok string, stems []string) bool {
 // handleVoiceCommand parses a transcript and, if it is a play command addressed
 // to the bot, dispatches it. Returns true if it handled a command.
 func (b *Bot) handleVoiceCommand(guildID, voiceChannelID, userID, transcript string) bool {
+	if userID != "" && isBanned(userID) {
+		return false
+	}
 	tokens := tokenize(transcript)
 	if len(tokens) == 0 {
 		return false

@@ -41,6 +41,14 @@ func isOwnerID(userID string) bool {
 
 // loadBans reads the persisted ban list. Call once on startup.
 func loadBans() {
+	owners := 0
+	for _, id := range strings.Split(os.Getenv("OWNER_IDS"), ",") {
+		if strings.TrimSpace(id) != "" {
+			owners++
+		}
+	}
+	log.Printf("bot owners configured: %d (from OWNER_IDS)", owners)
+
 	banFile = os.Getenv("BAN_FILE")
 	if banFile == "" {
 		log.Println("BAN_FILE not set; bans are in-memory only (lost on restart)")

@@ -175,6 +175,18 @@ func (b *Bot) setupCommands() {
 			Description: "Skips the currently playing song for a next one",
 		},
 		{
+			Name:        "seek",
+			Description: "Seek within the current track: 1:23, 90, +30, -15",
+			Options: []*discordgo.ApplicationCommandOption{
+				{
+					Type:        discordgo.ApplicationCommandOptionString,
+					Name:        "time",
+					Description: "Position (1:23 / 90) or offset (+30 / -15)",
+					Required:    true,
+				},
+			},
+		},
+		{
 			Name:        "wakeup",
 			Description: "Wakes the user up by shuffling them a lot.",
 			Options: []*discordgo.ApplicationCommandOption{
@@ -240,6 +252,8 @@ func (b *Bot) setupCommands() {
 		"play": b.onPlay,
 
 		"skip": b.onSkip,
+
+		"seek": b.onSeek,
 
 		"wakeup": b.wakeUp,
 

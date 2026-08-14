@@ -1,0 +1,205 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Sanya</title>
+<style>
+  :root { color-scheme: dark; }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; font: 15px/1.5 system-ui, sans-serif;
+    background: #0f1115; color: #e6e8ec;
+    display: flex; justify-content: center;
+  }
+  main { width: 100%; max-width: 640px; padding: 20px 16px 60px; }
+  h1 { font-size: 20px; margin: 0 0 16px; }
+  h1 small { color: #8b90a0; font-weight: 400; font-size: 13px; }
+  .hidden { display: none !important; }
+  button {
+    font: inherit; cursor: pointer; color: #e6e8ec;
+    background: #232634; border: 1px solid #333849; border-radius: 8px;
+    padding: 8px 14px;
+  }
+  button:hover { background: #2c3040; }
+  button.primary { background: #5865f2; border-color: #5865f2; }
+  button.primary:hover { background: #4a56d6; }
+  button:disabled { opacity: .5; cursor: default; }
+  input, select {
+    font: inherit; color: #e6e8ec; background: #191c24;
+    border: 1px solid #333849; border-radius: 8px; padding: 8px 10px; width: 100%;
+  }
+  .row { display: flex; gap: 8px; margin: 10px 0; }
+  .row > input { flex: 1; }
+  .card { background: #171a21; border: 1px solid #232634; border-radius: 12px; padding: 16px; margin: 14px 0; }
+  .np-title { font-weight: 600; margin-bottom: 4px; word-break: break-word; }
+  .np-title.idle { color: #8b90a0; font-weight: 400; }
+  .times { display: flex; justify-content: space-between; color: #8b90a0; font-size: 13px; margin-top: 4px; }
+  input[type=range] { width: 100%; accent-color: #5865f2; padding: 0; }
+  .controls { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
+  ol.queue { list-style: none; margin: 8px 0 0; padding: 0; }
+  ol.queue li { padding: 8px 0; border-top: 1px solid #232634; color: #c7cbd6; word-break: break-word; }
+  ol.queue li span { color: #6b7080; margin-right: 8px; }
+  .results { margin-top: 8px; }
+  .results button { display: block; width: 100%; text-align: left; margin-bottom: 6px; }
+  .results .sub { color: #8b90a0; font-size: 13px; }
+  .center { text-align: center; padding: 60px 0; }
+  a.btn { text-decoration: none; }
+  .muted { color: #8b90a0; }
+</style>
+</head>
+<body>
+<main>
+  <!-- login -->
+  <section id="login" class="hidden center">
+    <h1>🎧 Sanya</h1>
+    <p class="muted">Sign in to control the bot.</p>
+    <a class="btn" href="/login"><button class="primary">Login with Discord</button></a>
+  </section>
+
+  <!-- banned -->
+  <section id="banned" class="hidden center">
+    <h1>🚫</h1>
+    <p>Ты забанен и не можешь использовать бота.</p>
+  </section>
+
+  <!-- app -->
+  <section id="app" class="hidden">
+    <h1>🎧 Sanya <small id="who"></small></h1>
+
+    <select id="guild"></select>
+    <p id="noguilds" class="muted hidden">You don't share any server with Sanya.</p>
+
+    <div id="panel" class="hidden">
+      <div class="card">
+        <div id="npTitle" class="np-title idle">Nothing playing</div>
+        <input type="range" id="seek" min="0" max="0" value="0" disabled />
+        <div class="times"><span id="pos">0:00</span><span id="len">0:00</span></div>
+        <div class="controls">
+          <button id="pause" disabled>⏸️ Pause</button>
+          <button id="skip">⏭️ Skip</button>
+          <button id="repeat">🔁 Repeat</button>
+          <button id="stop">⏹️ Stop</button>
+        </div>
+      </div>
+
+      <div class="row">
+        <input id="playInput" placeholder="Paste a link or type a song…" />
+        <button id="playBtn" class="primary">Play</button>
+      </div>
+
+      <div class="row">
+        <input id="searchInput" placeholder="Search…" />
+        <button id="searchBtn">🔎</button>
+      </div>
+      <div id="results" class="results"></div>
+
+      <div class="card">
+        <strong>Queue</strong>
+        <ol id="queue" class="queue"><li class="muted" style="border:0">empty</li></ol>
+      </div>
+
+      <p><a class="btn" href="/logout"><button>Logout</button></a></p>
+    </div>
+  </section>
+</main>
+
+<script>
+const $ = (id) => document.getElementById(id);
+const fmt = (ms) => { const s = Math.max(0, Math.floor(ms/1000)); return Math.floor(s/60)+':'+String(s%60).padStart(2,'0'); };
+let guild = null, seeking = false, paused = false, repeat = false;
+
+function show(id) { for (const s of ['login','banned','app']) $(s).classList.toggle('hidden', s !== id); }
+
+async function api(path, opts) {
+  const res = await fetch(path, opts);
+  if (res.status === 401) { show('login'); throw 'unauth'; }
+  if (res.status === 403) { show('banned'); throw 'banned'; }
+  return res;
+}
+
+async function init() {
+  let me;
+  try { me = await (await api('/api/me')).json(); } catch { return; }
+  $('who').textContent = me.user ? 'as ' + me.user : '';
+  const sel = $('guild');
+  sel.innerHTML = '';
+  if (!me.guilds || !me.guilds.length) { $('noguilds').classList.remove('hidden'); show('app'); return; }
+  for (const g of me.guilds) { const o = document.createElement('option'); o.value = g.id; o.textContent = g.name; sel.appendChild(o); }
+  guild = me.guilds[0].id;
+  $('panel').classList.remove('hidden');
+  show('app');
+  poll();
+}
+
+async function poll() {
+  if (!guild || document.hidden) return schedule();
+  let st;
+  try { st = await (await api('/api/state?guild=' + guild)).json(); } catch { return; }
+  const has = !!st.title;
+  $('npTitle').textContent = has ? st.title : 'Nothing playing';
+  $('npTitle').classList.toggle('idle', !has);
+  const seek = $('seek');
+  seek.disabled = !has;
+  seek.max = st.length || 0;
+  if (!seeking) seek.value = st.position || 0;
+  $('pos').textContent = fmt(seeking ? seek.value : (st.position || 0));
+  $('len').textContent = fmt(st.length || 0);
+  paused = !!st.paused;
+  $('pause').textContent = paused ? '▶️ Resume' : '⏸️ Pause';
+  $('pause').disabled = !has;
+  repeat = !!st.repeat;
+  $('repeat').style.borderColor = repeat ? '#5865f2' : '';
+  const q = $('queue');
+  if (st.queue && st.queue.length) {
+    q.innerHTML = st.queue.map((t, i) => `<li><span>${i+1}</span>${escapeHtml(t.title)}</li>`).join('');
+  } else { q.innerHTML = '<li class="muted" style="border:0">empty</li>'; }
+  schedule();
+}
+function schedule() { setTimeout(poll, 1000); }
+function escapeHtml(s) { return (s||'').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
+
+$('guild').onchange = (e) => { guild = e.target.value; };
+
+const send = (path, opts) => api(path, opts).then(poll).catch(()=>{});
+
+$('seek').addEventListener('input', () => { seeking = true; $('pos').textContent = fmt($('seek').value); });
+$('seek').addEventListener('change', () => {
+  send('/api/seek?guild=' + guild, { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ ms: Number($('seek').value) }) });
+  seeking = false;
+});
+
+$('pause').onclick = () => send('/api/pause?guild=' + guild, { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ paused: !paused }) });
+$('skip').onclick = () => send('/api/skip?guild=' + guild, { method:'POST' });
+$('stop').onclick = () => send('/api/stop?guild=' + guild, { method:'POST' });
+$('repeat').onclick = () => send('/api/repeat?guild=' + guild, { method:'POST' });
+
+function doPlay(query) {
+  return api('/api/play?guild=' + guild, { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ query }) })
+    .then(r => { if (r.status === 409) alert('Join a voice channel first.'); poll(); }).catch(()=>{});
+}
+$('playBtn').onclick = () => { const v = $('playInput').value.trim(); if (v) { doPlay(v); $('playInput').value=''; } };
+$('playInput').addEventListener('keydown', e => { if (e.key === 'Enter') $('playBtn').click(); });
+
+async function doSearch() {
+  const q = $('searchInput').value.trim();
+  if (!q) return;
+  const res = $('results'); res.innerHTML = '<p class="muted">searching…</p>';
+  let list;
+  try { list = await (await api('/api/search?q=' + encodeURIComponent(q))).json(); } catch { return; }
+  if (!list.length) { res.innerHTML = '<p class="muted">nothing found</p>'; return; }
+  res.innerHTML = '';
+  for (const t of list) {
+    const btn = document.createElement('button');
+    btn.innerHTML = escapeHtml(t.title) + '<div class="sub">' + escapeHtml(t.author||'') + ' · ' + fmt(t.length||0) + '</div>';
+    btn.onclick = () => { doPlay(t.uri); res.innerHTML = ''; $('searchInput').value=''; };
+    res.appendChild(btn);
+  }
+}
+$('searchBtn').onclick = doSearch;
+$('searchInput').addEventListener('keydown', e => { if (e.key === 'Enter') doSearch(); });
+
+init();
+</script>
+</body>
+</html>

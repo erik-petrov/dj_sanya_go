@@ -68,6 +68,9 @@ services:
       - STT_URL=http://stt:8000
       - SC_BOT_ALLOWLIST=TTS Bot#3590 # bots to still transcribe (id / name / name#disc, comma-sep); all other bots ignored
       - BAN_FILE=/data/banned.json # persisted ban list (OWNER_IDS in .env controls /ban)
+      - WEB_ADDR=:8080 # web control panel (needs WEB_BASE_URL + DISCORD_CLIENT_ID/SECRET in .env)
+    ports:
+      - "127.0.0.1:8080:8080" # web panel — reverse-proxy your domain to this
     volumes:
       - bandata:/data # persist the ban list across restarts/recreation
 

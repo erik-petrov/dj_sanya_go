@@ -55,6 +55,7 @@ func (b *Bot) Start() error {
 	b.setupEars()
 	b.setupCommands()
 	b.setupHook()
+	b.setupWeb()
 	b.sirusParsing()
 	return nil
 }

@@ -47,6 +47,7 @@ func New(boot Boot) (*Bot, error) {
 }
 
 func (b *Bot) Start() error {
+	loadBans()
 	if err := b.s.Open(); err != nil {
 		return err
 	}
@@ -54,6 +55,7 @@ func (b *Bot) Start() error {
 	b.setupEars()
 	b.setupCommands()
 	b.setupHook()
+	b.setupWeb()
 	b.sirusParsing()
 	return nil
 }
@@ -174,6 +176,18 @@ func (b *Bot) setupCommands() {
 			Description: "Skips the currently playing song for a next one",
 		},
 		{
+			Name:        "seek",
+			Description: "Seek within the current track: 1:23, 90, +30, -15",
+			Options: []*discordgo.ApplicationCommandOption{
+				{
+					Type:        discordgo.ApplicationCommandOptionString,
+					Name:        "time",
+					Description: "Position (1:23 / 90) or offset (+30 / -15)",
+					Required:    true,
+				},
+			},
+		},
+		{
 			Name:        "wakeup",
 			Description: "Wakes the user up by shuffling them a lot.",
 			Options: []*discordgo.ApplicationCommandOption{
@@ -201,6 +215,32 @@ func (b *Bot) setupCommands() {
 			Name:        "unlisten",
 			Description: "Stop listening and leave the voice channel.",
 		},
+		{
+			Name:                     "ban",
+			Description:              "Ban a user from using the bot (owner only).",
+			DefaultMemberPermissions: &adminOnlyPerm,
+			Options: []*discordgo.ApplicationCommandOption{
+				{
+					Type:        discordgo.ApplicationCommandOptionUser,
+					Name:        "user",
+					Description: "User to ban",
+					Required:    true,
+				},
+			},
+		},
+		{
+			Name:                     "unban",
+			Description:              "Unban a user (owner only).",
+			DefaultMemberPermissions: &adminOnlyPerm,
+			Options: []*discordgo.ApplicationCommandOption{
+				{
+					Type:        discordgo.ApplicationCommandOptionUser,
+					Name:        "user",
+					Description: "User to unban",
+					Required:    true,
+				},
+			},
+		},
 	}
 
 	commandHandlers := map[string]func(s *discordgo.Session, i *discordgo.InteractionCreate){
@@ -214,6 +254,8 @@ func (b *Bot) setupCommands() {
 
 		"skip": b.onSkip,
 
+		"seek": b.onSeek,
+
 		"wakeup": b.wakeUp,
 
 		"debug": b.debug,
@@ -223,9 +265,18 @@ func (b *Bot) setupCommands() {
 		"listen": b.onListen,
 
 		"unlisten": b.onUnlisten,
+
+		"ban": b.onBan,
+
+		"unban": b.onUnban,
 	}
 
 	b.s.AddHandler(func(s *discordgo.Session, i *discordgo.InteractionCreate) {
+		// Banned users can't use anything — commands or buttons.
+		if uid := interactionUserID(i); uid != "" && isBanned(uid) {
+			denyBanned(s, i)
+			return
+		}
 		switch i.Type {
 		case discordgo.InteractionApplicationCommand:
 			if h, ok := commandHandlers[i.ApplicationCommandData().Name]; ok {

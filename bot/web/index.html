@@ -139,13 +139,15 @@ async function poll() {
   const has = !!st.title;
   $('npTitle').textContent = has ? st.title : 'Nothing playing';
   $('npTitle').classList.toggle('idle', !has);
+  paused = !!st.paused;
   const seek = $('seek');
   seek.disabled = !has;
   seek.max = st.length || 0;
-  if (!seeking) seek.value = st.position || 0;
-  $('pos').textContent = fmt(seeking ? seek.value : (st.position || 0));
+  // Freeze the scrubber while dragging, and ignore the bogus 0 disgolink briefly
+  // reports right after a pause.
+  if (!seeking && (!paused || (st.position || 0) > 0)) seek.value = st.position || 0;
+  $('pos').textContent = fmt(Number(seek.value) || 0);
   $('len').textContent = fmt(st.length || 0);
-  paused = !!st.paused;
   $('pause').textContent = paused ? '▶️ Resume' : '⏸️ Pause';
   $('pause').disabled = !has;
   repeat = !!st.repeat;

@@ -714,23 +714,25 @@ func (b *Bot) onTrackEnd(player disgolink.Player, event lavalink.TrackEndEvent) 
 	guildID := event.GuildID().String()
 	queue := LavalinkQueues.Get(guildID)
 
-	var (
-		next lavalink.Track
-		ok   bool
-	)
-	switch queue.Type {
-	case QueueTypeRepeatTrack:
-		next, ok = event.Track, true
-	case QueueTypeRepeatQueue:
-		queue.Add(event.Track)
-		next, ok = queue.Next()
-	default: // QueueTypeNormal
-		next, ok = queue.Next()
-	}
-	if !ok {
+	// Single-track repeat: replay the same track, but only on a clean finish —
+	// loadFailed (e.g. an expired file URL) would otherwise loop forever — and
+	// don't re-announce, it's the same song looping.
+	if queue.Type == QueueTypeRepeatTrack {
+		if event.Reason == lavalink.TrackEndReasonFinished {
+			if err := player.Update(context.TODO(), lavalink.WithTrack(event.Track)); err != nil {
+				log.Println("failed to repeat track:", err)
+			}
+		}
 		return
 	}
 
+	if queue.Type == QueueTypeRepeatQueue {
+		queue.Add(event.Track)
+	}
+	next, ok := queue.Next()
+	if !ok {
+		return
+	}
 	if err := player.Update(context.TODO(), lavalink.WithTrack(next)); err != nil {
 		log.Println("failed to play next track:", err)
 		return
@@ -740,6 +742,9 @@ func (b *Bot) onTrackEnd(player disgolink.Player, event lavalink.TrackEndEvent) 
 
 func (b *Bot) onTrackException(player disgolink.Player, event lavalink.TrackExceptionEvent) {
 	log.Printf("track exception in guild %s: %+v", event.GuildID(), event)
+	if ch, ok := announceChannels.Load(event.GuildID().String()); ok {
+		_, _ = b.s.ChannelMessageSend(ch.(string), "⚠️ Не смог воспроизвести трек (возможно, ограничение по возрасту или региону) — пропускаю.")
+	}
 }
 
 func (b *Bot) onTrackStuck(player disgolink.Player, event lavalink.TrackStuckEvent) {

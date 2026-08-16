@@ -763,7 +763,7 @@ func (b *Bot) onTrackEnd(player disgolink.Player, event lavalink.TrackEndEvent) 
 func (b *Bot) onTrackException(player disgolink.Player, event lavalink.TrackExceptionEvent) {
 	log.Printf("track exception in guild %s: %+v", event.GuildID(), event)
 	if ch, ok := announceChannels.Load(event.GuildID().String()); ok {
-		_, _ = b.s.ChannelMessageSend(ch.(string), "⚠️ Не смог воспроизвести трек (возможно, ограничение по возрасту или региону) — пропускаю.")
+		_, _ = b.s.ChannelMessageSend(ch.(string), "⚠️ Не смог воспроизвести трек (ограниченный контент) — пропускаю.")
 	}
 }
 

@@ -5,6 +5,7 @@ import (
 	"log"
 	"os"
 	"os/signal"
+	"syscall"
 
 	"github.com/erik-petrov/dj_sanya_go/bot"
 )
@@ -48,7 +49,7 @@ func main() {
 	defer bot.Close()
 
 	stop := make(chan os.Signal, 1)
-	signal.Notify(stop, os.Interrupt)
+	signal.Notify(stop, os.Interrupt, syscall.SIGTERM)
 	log.Println("Press Ctrl+C to exit")
 	<-stop
 

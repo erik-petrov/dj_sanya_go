@@ -196,6 +196,26 @@ func (b *Bot) setupLavalink() {
 
 	LavalinkClient = client
 	log.Println("Lavalink connected at", address)
+
+	// An ungraceful prior shutdown (SIGKILL) can leave the bot ghosted into a
+	// voice channel; the next play then binds to that stale session and is
+	// silent. Once the guild voice states have arrived, leave any channel we're
+	// "in" without an active player — that can only be such a ghost.
+	go func() {
+		time.Sleep(5 * time.Second)
+		me := b.s.State.User.ID
+		for _, g := range b.s.State.Guilds {
+			vs, err := b.s.State.VoiceState(g.ID, me)
+			if err != nil || vs == nil || vs.ChannelID == "" {
+				continue
+			}
+			if LavalinkClient.ExistingPlayer(snowflake.MustParse(g.ID)) != nil {
+				continue // a real play created a player — not a ghost
+			}
+			log.Printf("clearing stale voice state in guild %s", g.ID)
+			_ = b.s.ChannelVoiceJoinManual(g.ID, "", false, false)
+		}
+	}()
 }
 
 // onVoiceStateUpdate forwards our own voice state changes to Lavalink and drops

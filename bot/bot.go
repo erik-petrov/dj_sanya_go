@@ -56,6 +56,7 @@ func (b *Bot) Start() error {
 	b.setupCommands()
 	b.setupHook()
 	b.setupWeb()
+	b.setupKick()
 	b.sirusParsing()
 	return nil
 }

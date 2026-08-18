@@ -38,8 +38,10 @@ func (b *Bot) onKickMessage(s *discordgo.Session, m *discordgo.MessageCreate) {
 		return
 	}
 
-	// Only members who could disconnect people themselves may schedule it.
-	perms, err := s.State.UserChannelPermissions(m.Author.ID, m.ChannelID)
+	// Only members who could disconnect people themselves may schedule it. Use
+	// the roles on the message event (MessagePermissions) rather than a State
+	// member lookup, which fails without the privileged GuildMembers intent.
+	perms, err := s.State.MessagePermissions(m.Message)
 	if err != nil || perms&discordgo.PermissionVoiceMoveMembers == 0 {
 		_, _ = s.ChannelMessageSend(m.ChannelID, "Нужно право «Перемещать участников».")
 		return

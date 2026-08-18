@@ -52,6 +52,7 @@ func (b *Bot) Start() error {
 		return err
 	}
 	b.setupLavalink()
+	b.setupPoToken()
 	b.setupEars()
 	b.setupCommands()
 	b.setupHook()

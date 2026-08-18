@@ -761,6 +761,9 @@ func (b *Bot) onTrackEnd(player disgolink.Player, event lavalink.TrackEndEvent) 
 
 func (b *Bot) onTrackException(player disgolink.Player, event lavalink.TrackExceptionEvent) {
 	log.Printf("track exception in guild %s: %+v", event.GuildID(), event)
+	// A failure here is often a stale/missing poToken (e.g. Lavalink restarted
+	// without one). Kick a rate-limited refresh so playback self-heals.
+	b.refreshPoTokenOnDemand()
 }
 
 func (b *Bot) onTrackStuck(player disgolink.Player, event lavalink.TrackStuckEvent) {

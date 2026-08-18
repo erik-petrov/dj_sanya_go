@@ -23,6 +23,16 @@ services:
       # uncomment below and set remoteCipher.password in application.yml to match:
       # - API_TOKEN=changeme
 
+  # BotGuard poToken provider: mints the poToken + visitorData that
+  # youtube-source's WEB clients need to pass YouTube's bot check. The bot
+  # (potoken.go) pulls a fresh pair every few hours and pushes it to Lavalink's
+  # runtime /youtube route. Port 4416 stays on the compose network — only the bot
+  # calls it.
+  bgutil:
+    image: brainicism/bgutil-ytdlp-pot-provider
+    container_name: bgutil
+    restart: unless-stopped
+
   # Lavalink audio node. Auto-downloads the youtube-plugin pinned in
   # application.yml on startup.
   lavalink:
@@ -60,11 +70,13 @@ services:
     depends_on:
       - lavalink
       - stt
+      - bgutil
     env_file: ".env" # BOT_TOKEN, EARS_BOT_TOKEN, SPOTIFY_*, etc.
     environment:
       - LAVALINK_ADDRESS=lavalink:2333
       - LAVALINK_PASSWORD=youshallnotpass # must match server.password in application.yml
       - LAVALINK_SECURE=false
+      - POT_PROVIDER_URL=http://bgutil:4416 # bgutil pot-provider; empty disables poToken auto-refresh
       - STT_URL=http://stt:8000
       - SC_BOT_ALLOWLIST=TTS Bot#3590 # bots to still transcribe (id / name / name#disc, comma-sep); all other bots ignored
       - BAN_FILE=/data/banned.json # persisted ban list (OWNER_IDS in .env controls /ban)

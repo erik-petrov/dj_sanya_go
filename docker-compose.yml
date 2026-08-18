@@ -5,12 +5,13 @@
 #
 # Requires: .env (BOT_TOKEN, EARS_BOT_TOKEN, SPOTIFY_*, ...) and
 # lavalink/application.yml. Service names are the hostnames on the compose
-# network (bot -> lavalink:2333, lavalink -> http://yt-cipher:8001,
-# bot -> http://stt:8000); nothing is exposed to the host.
+# network (bot -> lavalink:2333, lavalink -> http://bgutil:4416 for yt-dlp
+# poTokens, bot -> http://stt:8000); nothing is exposed to the host.
 
 services:
-  # Remote cipher server: deciphers YouTube stream signatures for the
-  # youtube-source plugin (fixes "Must find sig function from script").
+  # Remote cipher server for the youtube-source plugin. NOTE: now unused —
+  # YouTube goes through yt-dlp (LavaSrc), not youtube-source. Kept only so the
+  # rollback path (re-enable youtube-source) works without editing compose.
   yt-cipher:
     image: ghcr.io/kikkia/yt-cipher:master
     container_name: yt-cipher
@@ -23,24 +24,24 @@ services:
       # uncomment below and set remoteCipher.password in application.yml to match:
       # - API_TOKEN=changeme
 
-  # BotGuard poToken provider: mints the poToken + visitorData that
-  # youtube-source's WEB clients need to pass YouTube's bot check. The bot
-  # (potoken.go) pulls a fresh pair every few hours and pushes it to Lavalink's
-  # runtime /youtube route. Port 4416 stays on the compose network — only the bot
-  # calls it.
+  # BotGuard poToken provider. yt-dlp (inside the Lavalink container, via the
+  # bgutil-ytdlp-pot-provider plugin) calls this to mint poTokens so YouTube
+  # streams past the bot check. Port 4416 stays on the compose network.
   bgutil:
     image: brainicism/bgutil-ytdlp-pot-provider
     container_name: bgutil
     restart: unless-stopped
 
-  # Lavalink audio node. Auto-downloads the youtube-plugin pinned in
-  # application.yml on startup.
+  # Lavalink audio node. Built locally (lavalink/Dockerfile) to bake in yt-dlp,
+  # which LavaSrc uses to resolve YouTube (handles SABR + poToken via bgutil).
+  # Auto-downloads the Lavalink plugins pinned in application.yml on startup.
   lavalink:
-    image: ghcr.io/lavalink-devs/lavalink:4
+    build: ./lavalink
+    image: dj_sanya_lavalink
     container_name: lavalink
     restart: unless-stopped
     depends_on:
-      - yt-cipher
+      - bgutil # yt-dlp pulls poTokens from the bgutil provider
     environment:
       - _JAVA_OPTIONS=-Xmx1G # cap heap; raise if you see OOM
       # LavaSrc reads these for Spotify (interpolated from the repo-root .env).
@@ -76,7 +77,9 @@ services:
       - LAVALINK_ADDRESS=lavalink:2333
       - LAVALINK_PASSWORD=youshallnotpass # must match server.password in application.yml
       - LAVALINK_SECURE=false
-      - POT_PROVIDER_URL=http://bgutil:4416 # bgutil pot-provider; empty disables poToken auto-refresh
+      # POT_PROVIDER_URL intentionally unset: YouTube now goes through yt-dlp
+      # (inside Lavalink), which talks to bgutil directly, so the bot's old
+      # push-poToken-to-youtube-source loop (potoken.go) is dormant.
       - STT_URL=http://stt:8000
       - SC_BOT_ALLOWLIST=TTS Bot#3590 # bots to still transcribe (id / name / name#disc, comma-sep); all other bots ignored
       - BAN_FILE=/data/banned.json # persisted ban list (OWNER_IDS in .env controls /ban)

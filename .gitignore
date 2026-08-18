@@ -4,7 +4,8 @@ main.go.example
 tests/
 temp.ogg
 cookies.txt
-lavalink/
+lavalink/*
+!lavalink/Dockerfile
 logs/
 .idea/
 *.log

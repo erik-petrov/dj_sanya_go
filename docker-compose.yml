@@ -49,11 +49,6 @@ services:
       - SPOTIFY_SECRET=${SPOTIFY_SECRET}
     volumes:
       - ./lavalink/application.yml:/opt/Lavalink/application.yml:ro
-      # YouTube auth cookies (Netscape format) for yt-dlp. An authenticated
-      # session authorizes the googlevideo stream request that a bare poToken
-      # still 403s on a flagged IP. Read-only to avoid concurrent-write races;
-      # re-export when it expires. Must be world-readable (chmod 644).
-      - ./cookies.txt:/etc/yt-dlp/cookies.txt:ro
 
   # Speech-to-text sidecar (faster-whisper, Russian) for voice commands.
   stt:

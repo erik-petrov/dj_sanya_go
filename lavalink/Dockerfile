@@ -1,6 +1,8 @@
 # Lavalink + yt-dlp. LavaSrc shells out to `yt-dlp`, absent from the base image.
-#  - yt-dlp_linux: standalone build, bundles its own Python (base ships 3.10,
-#    whose deprecation notice would pollute LavaSrc's JSON parse).
+#  - yt-dlp_linux (NIGHTLY): standalone build, bundles its own Python (base ships
+#    3.10, whose deprecation notice would pollute LavaSrc's JSON parse). Nightly,
+#    not stable: stable 2026.07.04 had the youtube stream-403 bug (yt-dlp#17456);
+#    nightly's default client (visionos/HLS) downloads fine, no cookies needed.
 #  - deno: JS runtime yt-dlp needs to run YouTube's player JS and decipher
 #    signatures. Without it only storyboard formats resolve.
 #  - bgutil plugin zip: youtube's android_vr client now requires a GVS poToken
@@ -14,7 +16,7 @@
 # Update: docker compose build --pull --no-cache lavalink
 FROM ghcr.io/lavalink-devs/lavalink:4
 USER root
-ADD https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp_linux /usr/local/bin/yt-dlp.real
+ADD https://github.com/yt-dlp/yt-dlp-nightly-builds/releases/latest/download/yt-dlp_linux /usr/local/bin/yt-dlp.real
 ADD https://github.com/denoland/deno/releases/latest/download/deno-x86_64-unknown-linux-gnu.zip /tmp/deno.zip
 ADD https://github.com/Brainicism/bgutil-ytdlp-pot-provider/releases/latest/download/bgutil-ytdlp-pot-provider.zip /etc/yt-dlp/plugins/bgutil-ytdlp-pot-provider.zip
 RUN apt-get update && apt-get install -y --no-install-recommends unzip \

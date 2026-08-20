@@ -351,6 +351,12 @@ func (b *Bot) onComponent(s *discordgo.Session, i *discordgo.InteractionCreate) 
 	customID := i.MessageComponentData().CustomID
 	name, payload, _ := strings.Cut(customID, ":")
 
+	// The /filter-config removal menu is independent of music playback.
+	if name == filterRemoveID {
+		b.onFilterRemove(s, i)
+		return
+	}
+
 	ack := func() {
 		_ = s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
 			Type: discordgo.InteractionResponseDeferredMessageUpdate,

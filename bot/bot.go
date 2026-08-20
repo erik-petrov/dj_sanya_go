@@ -35,11 +35,11 @@ func New(boot Boot) (*Bot, error) {
 	// Lavalink needs the voice state/server gateway events and a cached voice
 	// state so we can find which channel the requesting user is in.
 	s.Identify.Intents |= discordgo.IntentsGuildVoiceStates
-	// The play-hook reads webhook message text, which needs the privileged
-	// Message Content intent (plus Guild Messages). Only request them when the
-	// hook is enabled — asking for a privileged intent that isn't enabled in the
-	// Developer Portal makes the gateway reject our login.
-	if hookEnabled() {
+	// The play-hook and the message filter read message text, which needs the
+	// privileged Message Content intent (plus Guild Messages). Only request them
+	// when one is enabled — asking for a privileged intent that isn't enabled in
+	// the Developer Portal makes the gateway reject our login.
+	if hookEnabled() || filterEnabled() {
 		s.Identify.Intents |= discordgo.IntentsGuildMessages | discordgo.IntentMessageContent
 	}
 	s.State.TrackVoice = true
@@ -58,6 +58,7 @@ func (b *Bot) Start() error {
 	b.setupHook()
 	b.setupWeb()
 	b.setupKick()
+	b.setupFilter()
 	b.sirusParsing()
 	return nil
 }
@@ -300,6 +301,16 @@ func (b *Bot) setupCommands() {
 		log.Println("registering global slash commands (visible in every server; can take up to ~1h to propagate)")
 	} else {
 		log.Println("registering slash commands to guild", b.guildID)
+	}
+
+	// Merge in the message-filter commands when the filter is enabled; the
+	// interaction router above shares the same commandHandlers map.
+	if filterEnabled() {
+		fcmds, fhandlers := b.filterCommands()
+		commands = append(commands, fcmds...)
+		for name, h := range fhandlers {
+			commandHandlers[name] = h
+		}
 	}
 
 	// Bulk-overwrite registers exactly this set (and prunes any stale commands)

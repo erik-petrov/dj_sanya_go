@@ -335,6 +335,9 @@ func nowPlayingComponents(t lavalink.Track) []discordgo.MessageComponent {
 // channel a recent /play set, else an auto-detected "bot channel" for the guild
 // (so Repeat after a restart, or a webhook play, still lands somewhere sensible).
 func (b *Bot) announceChannelFor(guildID string) string {
+	if mc := musicChannel(guildID); mc != "" {
+		return mc // explicit /set-music-channel wins
+	}
 	if ch, ok := announceChannels.Load(guildID); ok {
 		if id, _ := ch.(string); id != "" {
 			return id
@@ -359,7 +362,7 @@ func (b *Bot) defaultAnnounceChannel(guildID string) string {
 		}
 		return perms&discordgo.PermissionViewChannel != 0 && perms&discordgo.PermissionSendMessages != 0
 	}
-	keywords := []string{"bot", "music", "команд", "cmd", "муз", "бот", "spam", "спам", "song"}
+	keywords := []string{"bot", "music", "команд", "cmd", "муз", "бот", "spam", "спам", "song", "othershit"}
 	var systemCh, firstText string
 	for _, ch := range g.Channels {
 		if ch.Type != discordgo.ChannelTypeGuildText || !canSend(ch) {

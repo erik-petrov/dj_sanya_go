@@ -83,6 +83,7 @@ services:
       - STT_URL=http://stt:8000
       - SC_BOT_ALLOWLIST=TTS Bot#3590 # bots to still transcribe (id / name / name#disc, comma-sep); all other bots ignored
       - BAN_FILE=/data/banned.json # persisted ban list (OWNER_IDS in .env controls /ban)
+      - MUSIC_CHANNEL_FILE=/data/music_channels.json # /set-music-channel override for now-playing posts
       # Message filter: needs the Message Content privileged intent enabled in the
       # Developer Portal + the bot's Manage Messages permission. Configure live with
       # /add-regex, /watch-channel, /set-notification-channel, /add-whitelist,

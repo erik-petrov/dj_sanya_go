@@ -48,6 +48,7 @@ func New(boot Boot) (*Bot, error) {
 
 func (b *Bot) Start() error {
 	loadBans()
+	loadMusicChannels()
 	if err := b.s.Open(); err != nil {
 		return err
 	}
@@ -244,6 +245,19 @@ func (b *Bot) setupCommands() {
 				},
 			},
 		},
+		{
+			Name:                     "set-music-channel",
+			Description:              "Set where now-playing and status messages are posted.",
+			DefaultMemberPermissions: &manageMessagesPerm,
+			Options: []*discordgo.ApplicationCommandOption{
+				{
+					Type:        discordgo.ApplicationCommandOptionChannel,
+					Name:        "channel",
+					Description: "Music / announce channel",
+					Required:    true,
+				},
+			},
+		},
 	}
 
 	commandHandlers := map[string]func(s *discordgo.Session, i *discordgo.InteractionCreate){
@@ -272,6 +286,8 @@ func (b *Bot) setupCommands() {
 		"ban": b.onBan,
 
 		"unban": b.onUnban,
+
+		"set-music-channel": b.onSetMusicChannel,
 	}
 
 	b.s.AddHandler(func(s *discordgo.Session, i *discordgo.InteractionCreate) {

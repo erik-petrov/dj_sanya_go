@@ -83,9 +83,12 @@ func (b *Bot) onHookMessage(s *discordgo.Session, m *discordgo.MessageCreate) {
 		return
 	}
 
-	// Post now-playing / status in the target guild's bot channel (so its buttons
-	// target the right server); fall back to this control channel if none is found.
-	announce := b.defaultAnnounceChannel(guildID)
+	// Post now-playing / status in the target guild's music channel (explicit, then
+	// auto-detected); fall back to this control channel if none is found.
+	announce := musicChannel(guildID)
+	if announce == "" {
+		announce = b.defaultAnnounceChannel(guildID)
+	}
 	if announce == "" {
 		announce = m.ChannelID
 	}

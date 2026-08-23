@@ -331,14 +331,67 @@ func nowPlayingComponents(t lavalink.Track) []discordgo.MessageComponent {
 	}
 }
 
+// announceChannelFor returns where to post now-playing/status for a guild: the
+// channel a recent /play set, else an auto-detected "bot channel" for the guild
+// (so Repeat after a restart, or a webhook play, still lands somewhere sensible).
+func (b *Bot) announceChannelFor(guildID string) string {
+	if ch, ok := announceChannels.Load(guildID); ok {
+		if id, _ := ch.(string); id != "" {
+			return id
+		}
+	}
+	return b.defaultAnnounceChannel(guildID)
+}
+
+// defaultAnnounceChannel guesses a guild's bot channel when none was assigned:
+// a channel whose name looks bot/music-related, else the system channel, else the
+// first text channel the bot can post in. Best-effort — returns "" if it finds none.
+func (b *Bot) defaultAnnounceChannel(guildID string) string {
+	g, err := b.s.State.Guild(guildID)
+	if err != nil || g == nil {
+		return ""
+	}
+	botID := b.s.State.User.ID
+	canSend := func(ch *discordgo.Channel) bool {
+		perms, err := b.s.State.UserChannelPermissions(botID, ch.ID)
+		if err != nil {
+			return true // can't compute perms (no member cache) — let the send try
+		}
+		return perms&discordgo.PermissionViewChannel != 0 && perms&discordgo.PermissionSendMessages != 0
+	}
+	keywords := []string{"bot", "music", "команд", "cmd", "муз", "бот", "spam", "спам", "song"}
+	var systemCh, firstText string
+	for _, ch := range g.Channels {
+		if ch.Type != discordgo.ChannelTypeGuildText || !canSend(ch) {
+			continue
+		}
+		name := strings.ToLower(ch.Name)
+		for _, kw := range keywords {
+			if strings.Contains(name, kw) {
+				return ch.ID
+			}
+		}
+		if ch.ID == g.SystemChannelID {
+			systemCh = ch.ID
+		}
+		if firstText == "" {
+			firstText = ch.ID
+		}
+	}
+	if systemCh != "" {
+		return systemCh
+	}
+	return firstText
+}
+
 // sendNowPlaying posts the now-playing message — with a Skip button — to the
-// guild's announce channel, when one is set.
+// guild's announce channel (assigned, or the auto-detected bot channel).
 func (b *Bot) sendNowPlaying(guildID string, t lavalink.Track) {
-	ch, ok := announceChannels.Load(guildID)
-	if !ok {
+	chID := b.announceChannelFor(guildID)
+	if chID == "" {
 		return
 	}
-	_, _ = b.s.ChannelMessageSendComplex(ch.(string), &discordgo.MessageSend{
+	_, _ = b.s.ChannelMessageSendComplex(chID, &discordgo.MessageSend{
 		Content:    nowPlayingMsg(t),
 		Components: nowPlayingComponents(t),
 	})

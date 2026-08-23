@@ -83,11 +83,16 @@ func (b *Bot) onHookMessage(s *discordgo.Session, m *discordgo.MessageCreate) {
 		return
 	}
 
-	// Route now-playing / status back to the control channel.
-	announceChannels.Store(guildID, m.ChannelID)
+	// Post now-playing / status in the target guild's bot channel (so its buttons
+	// target the right server); fall back to this control channel if none is found.
+	announce := b.defaultAnnounceChannel(guildID)
+	if announce == "" {
+		announce = m.ChannelID
+	}
+	announceChannels.Store(guildID, announce)
 	log.Printf("[hook] play %q for user %s in guild %s channel %s", query, userID, guildID, channelID)
 	reply("▶️ <@" + userID + "> ставлю…")
-	go b.playQuery(guildID, channelID, query, m.ChannelID)
+	go b.playQuery(guildID, channelID, query, announce)
 }
 
 // findUserVoiceAnywhere returns the guild and voice channel the user is in,

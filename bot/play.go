@@ -436,6 +436,9 @@ func (b *Bot) onRepeatButton(s *discordgo.Session, i *discordgo.InteractionCreat
 	}
 	// Not the current track: play it now if idle, or queue it behind what's
 	// playing (loadAndPlay decides). Report the result back to the clicker only.
+	// Prefer the bot's / the clicker's channel in THIS server; if the clicker isn't
+	// in voice here, follow them to whatever other server they're connected in.
+	guildID := i.GuildID
 	ch := b.botVoiceChannel(i.GuildID)
 	if ch == "" {
 		if vs, err := s.State.VoiceState(i.GuildID, i.Member.User.ID); err == nil && vs != nil {
@@ -443,10 +446,18 @@ func (b *Bot) onRepeatButton(s *discordgo.Session, i *discordgo.InteractionCreat
 		}
 	}
 	if ch == "" {
-		b.ephemeralFollowup(s, i, "Зайдите в голосовой канал, чтобы повторить.")
+		if g, c, found := b.findUserVoice(i.Member.User.ID, i.GuildID); found {
+			guildID, ch = g, c
+		}
+	}
+	if ch == "" {
+		b.ephemeralFollowup(s, i, "Зайдите в голосовой канал (в этом или другом сервере), чтобы повторить.")
 		return
 	}
-	go b.loadAndPlay(i.GuildID, ch, identifier, displayName, func(m string) { b.ephemeralFollowup(s, i, m) })
+	if guildID != i.GuildID {
+		announceChannels.Store(guildID, ch) // panel to the target voice channel's text chat
+	}
+	go b.loadAndPlay(guildID, ch, identifier, displayName, func(m string) { b.ephemeralFollowup(s, i, m) })
 }
 
 // onRestartButton seeks the current track back to 0:00 — only when the clicked
@@ -542,6 +553,7 @@ func queueText(guildID string) string {
 // pickSession holds one deep-search's results while the requester chooses.
 type pickSession struct {
 	tracks         []lavalink.Track
+	guildID        string // guild to play in (may differ from where /play was used)
 	voiceChannelID string
 }
 
@@ -550,7 +562,7 @@ var searchPicks sync.Map // token(string) -> pickSession
 // deepSearch handles /play with deep:true — instead of auto-playing the first
 // hit, it shows the requester an ephemeral dropdown of the top-10 results.
 // Searches the raw query (no "песня lyrics" bias): the user picks manually.
-func (b *Bot) deepSearch(s *discordgo.Session, i *discordgo.InteractionCreate, query, voiceChannelID string) {
+func (b *Bot) deepSearch(s *discordgo.Session, i *discordgo.InteractionCreate, guildID, query, voiceChannelID string) {
 	if err := s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
 		Type: discordgo.InteractionResponseDeferredChannelMessageWithSource,
 		Data: &discordgo.InteractionResponseData{Flags: discordgo.MessageFlagsEphemeral},
@@ -584,7 +596,7 @@ func (b *Bot) deepSearch(s *discordgo.Session, i *discordgo.InteractionCreate, q
 	}
 
 	tok := strconv.FormatUint(repeatCounter.Add(1), 36)
-	searchPicks.Store(tok, pickSession{tracks: results, voiceChannelID: voiceChannelID})
+	searchPicks.Store(tok, pickSession{tracks: results, guildID: guildID, voiceChannelID: voiceChannelID})
 
 	opts := make([]discordgo.SelectMenuOption, len(results))
 	for idx, t := range results {
@@ -647,7 +659,7 @@ func (b *Bot) onPickMenu(s *discordgo.Session, i *discordgo.InteractionCreate, t
 	})
 
 	announceID := ""
-	if ch, ok := announceChannels.Load(i.GuildID); ok {
+	if ch, ok := announceChannels.Load(ps.guildID); ok {
 		announceID, _ = ch.(string)
 	}
 	report := func(m string) {
@@ -655,7 +667,7 @@ func (b *Bot) onPickMenu(s *discordgo.Session, i *discordgo.InteractionCreate, t
 			_, _ = b.s.ChannelMessageSend(announceID, m)
 		}
 	}
-	go b.startOrQueue(i.GuildID, ps.voiceChannelID, track, report)
+	go b.startOrQueue(ps.guildID, ps.voiceChannelID, track, report)
 }
 
 // startOrQueue plays an already-resolved track immediately (joining voice) when
@@ -823,6 +835,27 @@ func (b *Bot) SkipLavalink(guildID string) error {
 	return nil
 }
 
+// findUserVoice locates a voice channel the user is connected to: the preferred
+// guild first (where the command was used), then any other guild the bot shares
+// with them — first match wins, no disambiguation. Relies on cached voice states
+// (TrackVoice + the GuildVoiceStates intent, both already on).
+func (b *Bot) findUserVoice(userID, preferGuildID string) (guildID, channelID string, ok bool) {
+	if preferGuildID != "" {
+		if vs, err := b.s.State.VoiceState(preferGuildID, userID); err == nil && vs != nil && vs.ChannelID != "" {
+			return preferGuildID, vs.ChannelID, true
+		}
+	}
+	for _, g := range b.s.State.Guilds {
+		if g.ID == preferGuildID {
+			continue
+		}
+		if vs, err := b.s.State.VoiceState(g.ID, userID); err == nil && vs != nil && vs.ChannelID != "" {
+			return g.ID, vs.ChannelID, true
+		}
+	}
+	return "", "", false
+}
+
 // onPlay handles the /play command: it loads the requested
 // track/playlist/search through the node and plays (or queues) it.
 func (b *Bot) onPlay(s *discordgo.Session, i *discordgo.InteractionCreate) {
@@ -831,24 +864,32 @@ func (b *Bot) onPlay(s *discordgo.Session, i *discordgo.InteractionCreate) {
 		return
 	}
 
-	announceChannels.Store(i.GuildID, i.ChannelID)
-
 	identifier, displayName, rawQuery, deep, ok := b.resolveIdentifier(s, i)
 	if !ok {
 		return
 	}
 
-	// The user has to be in a voice channel for us to join.
-	voiceState, err := s.State.VoiceState(i.GuildID, i.Member.User.ID)
-	if err != nil || voiceState.ChannelID == "" {
-		respond(s, i, "You need to be in a voice channel!")
+	// Join wherever the user actually is: this server first, then any other server
+	// the bot shares with them.
+	guildID, voiceChannel, ok := b.findUserVoice(i.Member.User.ID, i.GuildID)
+	if !ok {
+		respond(s, i, "You need to be in a voice channel! (в этом или другом сервере с ботом)")
 		return
 	}
+
+	// The now-playing panel and its buttons must live in the guild we actually play
+	// in, or the buttons would target the wrong player. Same guild: the channel you
+	// used; cross-guild: the target voice channel's own text chat.
+	announceCh := i.ChannelID
+	if guildID != i.GuildID {
+		announceCh = voiceChannel
+	}
+	announceChannels.Store(guildID, announceCh)
 
 	// deep:true on a text query → let the user pick from the top-10 instead of
 	// auto-playing the first hit.
 	if deep && rawQuery != "" {
-		b.deepSearch(s, i, rawQuery, voiceState.ChannelID)
+		b.deepSearch(s, i, guildID, rawQuery, voiceChannel)
 		return
 	}
 
@@ -859,7 +900,7 @@ func (b *Bot) onPlay(s *discordgo.Session, i *discordgo.InteractionCreate) {
 		return
 	}
 
-	b.playWithFallback(i.GuildID, voiceState.ChannelID, identifier, displayName, rawQuery, func(m string) {
+	b.playWithFallback(guildID, voiceChannel, identifier, displayName, rawQuery, func(m string) {
 		editInteraction(s, i, m)
 	})
 }

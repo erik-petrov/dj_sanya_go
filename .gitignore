@@ -6,6 +6,7 @@ temp.ogg
 cookies.txt
 lavalink/*
 !lavalink/Dockerfile
+!lavalink/ytdlp-fixnull.py
 logs/
 .idea/
 *.log

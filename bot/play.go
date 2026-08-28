@@ -75,6 +75,20 @@ type LavalinkQueue struct {
 	mu     sync.Mutex
 	tracks []lavalink.Track
 	Type   QueueType
+	fails  int // consecutive playback failures; reset on a clean finish
+}
+
+// noteResult records whether the last track finished cleanly (resets the failure
+// streak) or failed (increments it), returning the current streak.
+func (q *LavalinkQueue) noteResult(finished bool) int {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	if finished {
+		q.fails = 0
+	} else {
+		q.fails++
+	}
+	return q.fails
 }
 
 func (q *LavalinkQueue) Add(tracks ...lavalink.Track) {
@@ -799,29 +813,42 @@ func (b *Bot) ToggleRepeat(guildID string) bool {
 	return true
 }
 
-// onTrackEnd advances the queue when a track finishes naturally.
+// maxConsecutiveFails caps how many failing tracks the queue auto-skips in a row
+// before it stops, so a systemic problem doesn't blast through the whole queue with
+// error spam. A clean finish resets the counter.
+const maxConsecutiveFails = 3
+
+// onTrackEnd advances the queue: past a track that finished, and past one that
+// failed to play (so a single bad track in a playlist doesn't stall the rest).
 func (b *Bot) onTrackEnd(player disgolink.Player, event lavalink.TrackEndEvent) {
-	// Only a clean finish advances the queue. A loadFailed used to skip to the
-	// next track (MayStartNext is true for it), which cascades through the whole
-	// queue when YouTube gates everything — don't treat "couldn't play" as a skip.
-	if event.Reason != lavalink.TrackEndReasonFinished {
+	// Stopped / replaced / cleanup are deliberate — never auto-advance those.
+	if !event.Reason.MayStartNext() {
 		return
 	}
 
 	guildID := event.GuildID().String()
 	queue := LavalinkQueues.Get(guildID)
+	finished := event.Reason == lavalink.TrackEndReasonFinished
 
-	// Single-track repeat: replay the same track (don't re-announce a loop).
-	if queue.Type == QueueTypeRepeatTrack {
-		if err := player.Update(context.TODO(), lavalink.WithTrack(event.Track)); err != nil {
-			log.Println("failed to repeat track:", err)
-		}
+	// Skip failed tracks, but give up after too many in a row.
+	if fails := queue.noteResult(finished); !finished && fails > maxConsecutiveFails {
+		log.Printf("onTrackEnd: %d consecutive failures in guild %s — not advancing", fails, guildID)
 		return
 	}
 
-	if queue.Type == QueueTypeRepeatQueue {
-		queue.Add(event.Track)
+	// Repeat only a track that actually finished — never loop one that failed.
+	if finished {
+		if queue.Type == QueueTypeRepeatTrack {
+			if err := player.Update(context.TODO(), lavalink.WithTrack(event.Track)); err != nil {
+				log.Println("failed to repeat track:", err)
+			}
+			return
+		}
+		if queue.Type == QueueTypeRepeatQueue {
+			queue.Add(event.Track)
+		}
 	}
+
 	next, ok := queue.Next()
 	if !ok {
 		return

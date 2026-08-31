@@ -1,7 +1,6 @@
 package bot
 
 import (
-	"fmt"
 	"log"
 	"time"
 
@@ -93,7 +92,14 @@ func (b *Bot) sirusParsing() {
 			if lastStatus != status {
 				_, err := b.s.ChannelMessageSend(sirusDataChannel, str)
 				if err != nil {
-					fmt.Println(err)
+					// The hardcoded announce channel was deleted — stop hammering it
+					// every status flip (this is the source of the "Unknown Channel"
+					// 404 spam), instead of logging a bare error forever.
+					if isUnknownChannel(err) {
+						log.Printf("sirus announcer: channel %s no longer exists — disabling", sirusDataChannel)
+						return
+					}
+					log.Println("sirus announcer send failed:", err)
 				}
 
 				lastStatus = status

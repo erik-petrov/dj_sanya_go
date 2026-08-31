@@ -414,6 +414,13 @@ func (b *Bot) sendNowPlaying(guildID string, t lavalink.Track) {
 	})
 }
 
+// isUnknownChannel reports whether err is Discord's "Unknown Channel" (10003) —
+// the target channel no longer exists.
+func isUnknownChannel(err error) bool {
+	var re *discordgo.RESTError
+	return errors.As(err, &re) && re.Message != nil && re.Message.Code == discordgo.ErrCodeUnknownChannel
+}
+
 // onComponent routes message-component interactions: the now-playing buttons
 // and the deep-search picker. Most handlers just ack the click; pause and the
 // picker instead respond by editing the clicked message, so they self-ack.
@@ -849,15 +856,22 @@ func (b *Bot) onTrackEnd(player disgolink.Player, event lavalink.TrackEndEvent) 
 		}
 	}
 
-	next, ok := queue.Next()
+	b.playNext(player, guildID)
+}
+
+// playNext pulls the next queued track, starts it, and announces it. Returns
+// false when the queue is empty. Shared by the track-end and stuck handlers.
+func (b *Bot) playNext(player disgolink.Player, guildID string) bool {
+	next, ok := LavalinkQueues.Get(guildID).Next()
 	if !ok {
-		return
+		return false
 	}
 	if err := player.Update(context.TODO(), lavalink.WithTrack(next)); err != nil {
 		log.Println("failed to play next track:", err)
-		return
+		return false
 	}
 	b.sendNowPlaying(guildID, next)
+	return true
 }
 
 func (b *Bot) onTrackException(player disgolink.Player, event lavalink.TrackExceptionEvent) {
@@ -867,8 +881,18 @@ func (b *Bot) onTrackException(player disgolink.Player, event lavalink.TrackExce
 	b.refreshPoTokenOnDemand()
 }
 
+// onTrackStuck fires when a stream stalls (more common with SoundCloud's HLS than
+// YouTube). Lavalink does not end the track itself, so skip to the next one —
+// honoring the same consecutive-failure cap as onTrackEnd — instead of sitting
+// silent.
 func (b *Bot) onTrackStuck(player disgolink.Player, event lavalink.TrackStuckEvent) {
-	log.Printf("track stuck in guild %s: %+v", event.GuildID(), event)
+	guildID := event.GuildID().String()
+	log.Printf("track stuck in guild %s (threshold %s) — skipping", guildID, event.Threshold)
+	if fails := LavalinkQueues.Get(guildID).noteResult(false); fails > maxConsecutiveFails {
+		log.Printf("onTrackStuck: %d consecutive failures in guild %s — not advancing", fails, guildID)
+		return
+	}
+	b.playNext(player, guildID)
 }
 
 // GetOrCreatePlayer returns the Lavalink player for a guild, creating one if it

@@ -147,8 +147,61 @@ func denyBanned(s *discordgo.Session, i *discordgo.InteractionCreate) {
 	})
 }
 
+// botHasAdmin reports whether the bot itself has the Administrator permission
+// where the interaction was invoked. Discord sends the app's computed
+// permissions (AppPermissions) with every interaction — no API call needed.
+func botHasAdmin(i *discordgo.InteractionCreate) bool {
+	return i.AppPermissions&discordgo.PermissionAdministrator != 0
+}
+
+// denyBotNoAdmin replies when the bot lacks Administrator and refuses the command.
+func denyBotNoAdmin(s *discordgo.Session, i *discordgo.InteractionCreate) {
+	_ = s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
+		Type: discordgo.InteractionResponseChannelMessageWithSource,
+		Data: &discordgo.InteractionResponseData{
+			Content: "🚫 Боту нужны права администратора на этом сервере.",
+			Flags:   discordgo.MessageFlagsEphemeral,
+		},
+	})
+}
+
 func (b *Bot) isOwner(i *discordgo.InteractionCreate) bool {
 	return isOwnerID(interactionUserID(i))
+}
+
+// banTarget resolves the ban/unban target from either the "user" option (a
+// mention/picker) or the "id" option (a raw user ID, so you can act on someone
+// not in the server). Prefers the user option; mention is a display string.
+func banTarget(s *discordgo.Session, i *discordgo.InteractionCreate) (id, mention string) {
+	for _, opt := range i.ApplicationCommandData().Options {
+		if opt.Name == "user" {
+			if u := opt.UserValue(s); u != nil {
+				return u.ID, u.Mention()
+			}
+		}
+	}
+	for _, opt := range i.ApplicationCommandData().Options {
+		if opt.Name == "id" {
+			if v := strings.TrimSpace(opt.StringValue()); isSnowflake(v) {
+				return v, "<@" + v + ">"
+			}
+		}
+	}
+	return "", ""
+}
+
+// isSnowflake reports whether s looks like a Discord ID (a non-empty run of
+// digits). Guards against banning a typo'd string that could never match a user.
+func isSnowflake(s string) bool {
+	if s == "" {
+		return false
+	}
+	for _, r := range s {
+		if r < '0' || r > '9' {
+			return false
+		}
+	}
+	return true
 }
 
 // onBan handles /ban (owner only).
@@ -157,19 +210,19 @@ func (b *Bot) onBan(s *discordgo.Session, i *discordgo.InteractionCreate) {
 		respond(s, i, "Только владелец бота может банить.")
 		return
 	}
-	user := i.ApplicationCommandData().Options[0].UserValue(s)
-	if user == nil {
-		respond(s, i, "Не указан пользователь.")
+	id, mention := banTarget(s, i)
+	if id == "" {
+		respond(s, i, "Укажи пользователя или корректный ID.")
 		return
 	}
-	if isOwnerID(user.ID) {
+	if isOwnerID(id) {
 		respond(s, i, "Нельзя забанить владельца.")
 		return
 	}
-	if banUser(user.ID) {
-		respond(s, i, "🚫 Забанен: "+user.Mention())
+	if banUser(id) {
+		respond(s, i, "🚫 Забанен: "+mention)
 	} else {
-		respond(s, i, user.Mention()+" уже забанен.")
+		respond(s, i, mention+" уже забанен.")
 	}
 }
 
@@ -179,14 +232,14 @@ func (b *Bot) onUnban(s *discordgo.Session, i *discordgo.InteractionCreate) {
 		respond(s, i, "Только владелец бота может это делать.")
 		return
 	}
-	user := i.ApplicationCommandData().Options[0].UserValue(s)
-	if user == nil {
-		respond(s, i, "Не указан пользователь.")
+	id, mention := banTarget(s, i)
+	if id == "" {
+		respond(s, i, "Укажи пользователя или корректный ID.")
 		return
 	}
-	if unbanUser(user.ID) {
-		respond(s, i, "✅ Разбанен: "+user.Mention())
+	if unbanUser(id) {
+		respond(s, i, "✅ Разбанен: "+mention)
 	} else {
-		respond(s, i, user.Mention()+" не был забанен.")
+		respond(s, i, mention+" не был забанен.")
 	}
 }

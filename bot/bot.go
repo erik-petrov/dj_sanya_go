@@ -228,7 +228,13 @@ func (b *Bot) setupCommands() {
 					Type:        discordgo.ApplicationCommandOptionUser,
 					Name:        "user",
 					Description: "User to ban",
-					Required:    true,
+					Required:    false,
+				},
+				{
+					Type:        discordgo.ApplicationCommandOptionString,
+					Name:        "id",
+					Description: "User ID to ban (for someone not in the server)",
+					Required:    false,
 				},
 			},
 		},
@@ -241,7 +247,13 @@ func (b *Bot) setupCommands() {
 					Type:        discordgo.ApplicationCommandOptionUser,
 					Name:        "user",
 					Description: "User to unban",
-					Required:    true,
+					Required:    false,
+				},
+				{
+					Type:        discordgo.ApplicationCommandOptionString,
+					Name:        "id",
+					Description: "User ID to unban (for someone not in the server)",
+					Required:    false,
 				},
 			},
 		},
@@ -294,6 +306,11 @@ func (b *Bot) setupCommands() {
 		// Banned users can't use anything — commands or buttons.
 		if uid := interactionUserID(i); uid != "" && isBanned(uid) {
 			denyBanned(s, i)
+			return
+		}
+		// Block everything unless the bot itself has Administrator on this server.
+		if !botHasAdmin(i) {
+			denyBotNoAdmin(s, i)
 			return
 		}
 		switch i.Type {

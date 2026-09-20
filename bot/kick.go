@@ -9,14 +9,12 @@ import (
 	"github.com/bwmarrin/discordgo"
 )
 
-// Prefix command, one guild only: "sanya!kick 1h" disconnects everyone from all
-// voice channels after the delay (Go duration: 1m, 1h, 90m, ...). Needs the
-// Message Content intent (already on when the play-hook is enabled) and the
-// bot's Move Members permission. In-memory timer — a restart cancels a pending kick.
-const (
-	kickGuildID = "802182206071767081"
-	kickPrefix  = "sanya!kick"
-)
+// Prefix command, any guild: "sanya!kick 1h" disconnects everyone from all voice
+// channels in the guild it's used in, after the delay (Go duration: 1m, 1h, 90m,
+// ...). Restricted to bot owners (OWNER_IDS in .env). Needs the Message Content
+// intent (already on when the play-hook or filter is enabled) and the bot's Move
+// Members permission. In-memory timer — a restart cancels a pending kick.
+const kickPrefix = "sanya!kick"
 
 func (b *Bot) setupKick() { b.s.AddHandler(b.onKickMessage) }
 
@@ -30,7 +28,7 @@ func parseKickDelay(s string) (time.Duration, bool) {
 }
 
 func (b *Bot) onKickMessage(s *discordgo.Session, m *discordgo.MessageCreate) {
-	if m.GuildID != kickGuildID || m.Author == nil || m.Author.Bot {
+	if m.GuildID == "" || m.Author == nil || m.Author.Bot {
 		return
 	}
 	fields := strings.Fields(m.Content)
@@ -38,12 +36,9 @@ func (b *Bot) onKickMessage(s *discordgo.Session, m *discordgo.MessageCreate) {
 		return
 	}
 
-	// Only members who could disconnect people themselves may schedule it. Use
-	// the roles on the message event (MessagePermissions) rather than a State
-	// member lookup, which fails without the privileged GuildMembers intent.
-	perms, err := s.State.MessagePermissions(m.Message)
-	if err != nil || perms&discordgo.PermissionVoiceMoveMembers == 0 {
-		_, _ = s.ChannelMessageSend(m.ChannelID, "Нужно право «Перемещать участников».")
+	// Owner-only (OWNER_IDS in .env). Ignore everyone else silently — no reply, so
+	// the command isn't discoverable or spammable by non-owners.
+	if !isOwnerID(m.Author.ID) {
 		return
 	}
 	if len(fields) < 2 {
@@ -56,8 +51,9 @@ func (b *Bot) onKickMessage(s *discordgo.Session, m *discordgo.MessageCreate) {
 		return
 	}
 
+	guildID := m.GuildID
 	_, _ = s.ChannelMessageSend(m.ChannelID, fmt.Sprintf("⏰ Кикну всех из голосовых через %s.", fields[1]))
-	time.AfterFunc(dur, func() { b.kickAllVoice(kickGuildID) })
+	time.AfterFunc(dur, func() { b.kickAllVoice(guildID) })
 }
 
 // kickAllVoice disconnects everyone currently in a voice channel in the guild,

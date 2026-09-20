@@ -72,23 +72,47 @@ const (
 
 // LavalinkQueue is a single guild's queue of Lavalink tracks.
 type LavalinkQueue struct {
-	mu     sync.Mutex
-	tracks []lavalink.Track
-	Type   QueueType
-	fails  int // consecutive playback failures; reset on a clean finish
+	mu        sync.Mutex
+	tracks    []lavalink.Track
+	Type      QueueType
+	fails     int       // consecutive playback failures; reset on a clean finish
+	startedAt time.Time // when the current track began playing; zero when none
 }
 
-// noteResult records whether the last track finished cleanly (resets the failure
-// streak) or failed (increments it), returning the current streak.
-func (q *LavalinkQueue) noteResult(finished bool) int {
+// noteResult records whether the last track succeeded (resets the failure streak)
+// or failed (increments it), returning the current streak.
+func (q *LavalinkQueue) noteResult(succeeded bool) int {
 	q.mu.Lock()
 	defer q.mu.Unlock()
-	if finished {
+	if succeeded {
 		q.fails = 0
 	} else {
 		q.fails++
 	}
 	return q.fails
+}
+
+// markStarted records that the current track just began playing (from TrackStart).
+func (q *LavalinkQueue) markStarted() {
+	q.mu.Lock()
+	q.startedAt = time.Now()
+	q.mu.Unlock()
+}
+
+// playedAtLeast reports whether the current track has been playing for at least d.
+func (q *LavalinkQueue) playedAtLeast(d time.Duration) bool {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	return !q.startedAt.IsZero() && time.Since(q.startedAt) >= d
+}
+
+// clearStarted forgets the current track's start time (it has ended; the next
+// track sets its own via markStarted). Prevents a track that never started from
+// inheriting the previous one's elapsed time.
+func (q *LavalinkQueue) clearStarted() {
+	q.mu.Lock()
+	q.startedAt = time.Time{}
+	q.mu.Unlock()
 }
 
 func (q *LavalinkQueue) Add(tracks ...lavalink.Track) {
@@ -160,6 +184,7 @@ func (b *Bot) setupLavalink() {
 	}
 
 	client := disgolink.New(snowflake.MustParse(b.s.State.User.ID),
+		disgolink.WithListenerFunc(b.onTrackStart),
 		disgolink.WithListenerFunc(b.onTrackEnd),
 		disgolink.WithListenerFunc(b.onTrackException),
 		disgolink.WithListenerFunc(b.onTrackStuck),
@@ -825,6 +850,20 @@ func (b *Bot) ToggleRepeat(guildID string) bool {
 // error spam. A clean finish resets the counter.
 const maxConsecutiveFails = 3
 
+// minPlayForSuccess is how long a track must have played before a fault at its end
+// counts as a successful play rather than a failure. Discord-CDN MP3 uploads (the
+// http source) routinely throw a tail-end FAULT (reason=loadFailed) instead of
+// finishing cleanly; without this, repeat never loops them and one such upload
+// looks "stuck". A track that dies in under this window is a real failure.
+const minPlayForSuccess = 3 * time.Second
+
+// onTrackStart timestamps the current track so onTrackEnd can tell a real load
+// failure (dies immediately) from a track that played through and only faulted at
+// the very end.
+func (b *Bot) onTrackStart(player disgolink.Player, event lavalink.TrackStartEvent) {
+	LavalinkQueues.Get(event.GuildID().String()).markStarted()
+}
+
 // onTrackEnd advances the queue: past a track that finished, and past one that
 // failed to play (so a single bad track in a playlist doesn't stall the rest).
 func (b *Bot) onTrackEnd(player disgolink.Player, event lavalink.TrackEndEvent) {
@@ -835,16 +874,19 @@ func (b *Bot) onTrackEnd(player disgolink.Player, event lavalink.TrackEndEvent) 
 
 	guildID := event.GuildID().String()
 	queue := LavalinkQueues.Get(guildID)
-	finished := event.Reason == lavalink.TrackEndReasonFinished
+	// Treat "played for a while then faulted at the end" as a success, so repeat
+	// loops it and it doesn't count against the failure cap.
+	succeeded := event.Reason == lavalink.TrackEndReasonFinished || queue.playedAtLeast(minPlayForSuccess)
+	queue.clearStarted()
 
 	// Skip failed tracks, but give up after too many in a row.
-	if fails := queue.noteResult(finished); !finished && fails > maxConsecutiveFails {
+	if fails := queue.noteResult(succeeded); !succeeded && fails > maxConsecutiveFails {
 		log.Printf("onTrackEnd: %d consecutive failures in guild %s — not advancing", fails, guildID)
 		return
 	}
 
-	// Repeat only a track that actually finished — never loop one that failed.
-	if finished {
+	// Repeat a track that played (cleanly finished, or faulted only at its end).
+	if succeeded {
 		if queue.Type == QueueTypeRepeatTrack {
 			if err := player.Update(context.TODO(), lavalink.WithTrack(event.Track)); err != nil {
 				log.Println("failed to repeat track:", err)
@@ -875,10 +917,85 @@ func (b *Bot) playNext(player disgolink.Player, guildID string) bool {
 }
 
 func (b *Bot) onTrackException(player disgolink.Player, event lavalink.TrackExceptionEvent) {
-	log.Printf("track exception in guild %s: %+v", event.GuildID(), event)
+	guildID := event.GuildID().String()
+	// Log the cause explicitly — Exception's %v only prints "severity: message"
+	// (the generic "Something broke…"), hiding the actual reason.
+	log.Printf("track exception in guild %s: %q [%s] cause=%q", guildID, event.Track.Info.Title, event.Exception.Severity, event.Exception.Cause)
 	// A failure here is often a stale/missing poToken (e.g. Lavalink restarted
 	// without one). Kick a rate-limited refresh so playback self-heals.
 	b.refreshPoTokenOnDemand()
+	// A track that already played through and only faulted at the very end is
+	// benign — onTrackEnd loops/advances it — so don't alarm the channel.
+	if LavalinkQueues.Get(guildID).playedAtLeast(minPlayForSuccess) {
+		return
+	}
+	if chID := b.announceChannelFor(guildID); chID != "" {
+		_, _ = b.s.ChannelMessageSend(chID, describeTrackException(event.Track, event.Exception))
+	}
+}
+
+// describeTrackException turns a Lavalink playback exception into a clear,
+// user-facing message: the track, what likely went wrong, and what to do. The raw
+// cause is appended (spoilered) for debugging.
+func describeTrackException(track lavalink.Track, exc lavalink.Exception) string {
+	title := track.Info.Title
+	if title == "" {
+		title = "трек"
+	}
+	msg := "⚠️ Не смог воспроизвести «" + title + "»\n" + adviceForException(exc)
+	if cause := strings.TrimSpace(exc.Cause); cause != "" {
+		if r := []rune(cause); len(r) > 300 { // rune-safe truncate (cause may be UTF-8)
+			cause = string(r[:300]) + "…"
+		}
+		msg += "\nПричина: ||" + cause + "||"
+	}
+	return msg
+}
+
+// adviceForException maps a playback exception to a human explanation + fix. It
+// keys off the underlying cause first (the specific reason), then falls back to
+// the Lavalink severity:
+//   - common     → the source rejected the track (removed/private/geo/age); pick another.
+//   - suspicious → the source misbehaved (e.g. YouTube changed something); retry, maybe update.
+//   - fault      → something broke internally/network-side; retry, else it's a bot/infra issue.
+func adviceForException(exc lavalink.Exception) string {
+	c := strings.ToLower(exc.Cause + " " + exc.Message)
+	switch {
+	case containsAny(c, "not available", "unavailable", "removed", "private", "does not exist", "terminated", "no longer"):
+		return "🚫 Видео недоступно (удалено, приватное или заблокировано). Попробуй другую ссылку или поиск."
+	case containsAny(c, "confirm your age", "sign in to confirm", "age-restricted", "inappropriate", "log in", "sign in"):
+		return "🔞 Возрастное ограничение — нужен вход через аккаунт (cookies). Попробуй другой источник."
+	case containsAny(c, "not available in your", "region", "country", "geo"):
+		return "🌍 Недоступно в этом регионе. Попробуй другой трек."
+	case containsAny(c, "429", "too many requests", "rate limit", "rate-limit"):
+		return "⏳ Слишком много запросов к источнику. Подожди минуту и попробуй снова."
+	case containsAny(c, "403", "forbidden", "access denied"):
+		return "⛔ Источник отклонил запрос (403). Обычно временно — попробуй ещё раз через минуту. Если повторяется — на сервере пора обновить yt-dlp/poToken."
+	case containsAny(c, "timed out", "timeout", "read timed out", "connection reset", "unexpected end", "premature", "connection"):
+		return "📡 Поток оборвался или таймаут. Попробуй ещё раз — часто помогает."
+	case containsAny(c, "copyright", "blocked it", "who has blocked"):
+		return "©️ Заблокировано правообладателем. Попробуй другую версию."
+	case containsAny(c, "no playable", "no supported", "no formats", "requires login", "sabr", "could not find", "failed to load", "extract", "yt-dlp"):
+		return "🧩 Не удалось получить аудио-поток (проблема извлечения). Попробуй другой трек; если у всех — на сервере пора обновить yt-dlp/poToken."
+	}
+	switch exc.Severity {
+	case lavalink.SeverityCommon:
+		return "🚫 Трек нельзя воспроизвести (проблема на стороне источника). Попробуй другой."
+	case lavalink.SeveritySuspicious:
+		return "⚠️ Источник повёл себя странно (возможно, YouTube что-то поменял). Попробуй ещё раз; если повторяется — нужно обновление бота."
+	default: // fault
+		return "💥 Внутренняя ошибка воспроизведения. Попробуй ещё раз; если повторяется — проблема на стороне бота/сервера."
+	}
+}
+
+// containsAny reports whether s contains any of subs.
+func containsAny(s string, subs ...string) bool {
+	for _, sub := range subs {
+		if strings.Contains(s, sub) {
+			return true
+		}
+	}
+	return false
 }
 
 // onTrackStuck fires when a stream stalls (more common with SoundCloud's HLS than
@@ -888,7 +1005,9 @@ func (b *Bot) onTrackException(player disgolink.Player, event lavalink.TrackExce
 func (b *Bot) onTrackStuck(player disgolink.Player, event lavalink.TrackStuckEvent) {
 	guildID := event.GuildID().String()
 	log.Printf("track stuck in guild %s (threshold %s) — skipping", guildID, event.Threshold)
-	if fails := LavalinkQueues.Get(guildID).noteResult(false); fails > maxConsecutiveFails {
+	queue := LavalinkQueues.Get(guildID)
+	queue.clearStarted()
+	if fails := queue.noteResult(false); fails > maxConsecutiveFails {
 		log.Printf("onTrackStuck: %d consecutive failures in guild %s — not advancing", fails, guildID)
 		return
 	}

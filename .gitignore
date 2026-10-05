@@ -7,6 +7,7 @@ cookies.txt
 lavalink/*
 !lavalink/Dockerfile
 !lavalink/ytdlp-fixnull.py
+!lavalink/yt-dlp-wrapper.sh
 logs/
 .idea/
 *.log

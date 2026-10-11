@@ -77,6 +77,46 @@ type LavalinkQueue struct {
 	Type      QueueType
 	fails     int       // consecutive playback failures; reset on a clean finish
 	startedAt time.Time // when the current track began playing; zero when none
+
+	// Stream-403 retry state for the current track (see onTrackException).
+	retryID      string            // track identifier the retries belong to
+	retries      int               // retries used for retryID
+	retryPos     lavalink.Duration // where to resume
+	retryPending bool              // a retry is queued for onTrackEnd to perform
+}
+
+// takeRetry queues a resume-from-pos retry for the given track and reports whether
+// one is allowed (at most maxStreamRetries per track; a new track starts fresh).
+func (q *LavalinkQueue) takeRetry(id string, pos lavalink.Duration) bool {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	if id != q.retryID {
+		q.retryID, q.retries = id, 0
+	}
+	if q.retries >= maxStreamRetries {
+		return false
+	}
+	q.retries++
+	q.retryPos, q.retryPending = pos, true
+	return true
+}
+
+// pendingRetry consumes a retry queued by takeRetry, returning where to resume.
+func (q *LavalinkQueue) pendingRetry() (lavalink.Duration, bool) {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	if !q.retryPending {
+		return 0, false
+	}
+	q.retryPending = false
+	return q.retryPos, true
+}
+
+// resetRetry clears the retry state once a track has really ended.
+func (q *LavalinkQueue) resetRetry() {
+	q.mu.Lock()
+	q.retryID, q.retries, q.retryPos, q.retryPending = "", 0, 0, false
+	q.mu.Unlock()
 }
 
 // noteResult records whether the last track succeeded (resets the failure streak)
@@ -857,6 +897,15 @@ const maxConsecutiveFails = 3
 // looks "stuck". A track that dies in under this window is a real failure.
 const minPlayForSuccess = 3 * time.Second
 
+// maxStreamRetries caps quiet retries of a track whose stream URL got a 403. YouTube
+// currently rejects a random ~2/3 of fresh stream URLs (independent of client, cache,
+// PO token and cookies; a rejected URL stays rejected), and LavaSrc re-extracts a new
+// URL on every play, so a few retries get most tracks playing: at ~1/3 per attempt,
+// 6 attempts succeed ~91% of the time. Each retry restarts the track, so Lavalink's
+// stuck timer never fires mid-retry.
+// ponytail: retry-and-hope while YouTube is flaky; each retry costs ~2-4s of silence.
+const maxStreamRetries = 5
+
 // onTrackStart timestamps the current track so onTrackEnd can tell a real load
 // failure (dies immediately) from a track that played through and only faulted at
 // the very end.
@@ -874,6 +923,19 @@ func (b *Bot) onTrackEnd(player disgolink.Player, event lavalink.TrackEndEvent) 
 
 	guildID := event.GuildID().String()
 	queue := LavalinkQueues.Get(guildID)
+
+	// A stream 403 queued a retry in onTrackException: replay the same track (LavaSrc
+	// re-extracts a fresh URL) from where it stopped, instead of skipping it.
+	if pos, ok := queue.pendingRetry(); ok {
+		queue.clearStarted()
+		err := player.Update(context.TODO(), lavalink.WithTrack(event.Track), lavalink.WithPosition(pos))
+		if err == nil {
+			return
+		}
+		log.Println("failed to retry track:", err)
+	}
+	queue.resetRetry()
+
 	// Treat "played for a while then faulted at the end" as a success, so repeat
 	// loops it and it doesn't count against the failure cap.
 	succeeded := event.Reason == lavalink.TrackEndReasonFinished || queue.playedAtLeast(minPlayForSuccess)
@@ -924,9 +986,16 @@ func (b *Bot) onTrackException(player disgolink.Player, event lavalink.TrackExce
 	// A failure here is often a stale/missing poToken (e.g. Lavalink restarted
 	// without one). Kick a rate-limited refresh so playback self-heals.
 	b.refreshPoTokenOnDemand()
+	queue := LavalinkQueues.Get(guildID)
+	// A stream 403 is usually just this URL: retry quietly (onTrackEnd replays it with
+	// a fresh extraction) and only tell the channel once the retries are used up.
+	if strings.Contains(event.Exception.Cause, "403") && queue.takeRetry(event.Track.Info.Identifier, event.Track.Info.Position) {
+		log.Printf("retrying %q after a stream 403 (from %s)", event.Track.Info.Title, event.Track.Info.Position)
+		return
+	}
 	// A track that already played through and only faulted at the very end is
 	// benign — onTrackEnd loops/advances it — so don't alarm the channel.
-	if LavalinkQueues.Get(guildID).playedAtLeast(minPlayForSuccess) {
+	if queue.playedAtLeast(minPlayForSuccess) {
 		return
 	}
 	if chID := b.announceChannelFor(guildID); chID != "" {

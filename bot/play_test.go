@@ -64,3 +64,38 @@ func TestAdviceForException(t *testing.T) {
 		}
 	}
 }
+
+// TestStreamRetry covers the stream-403 retry bookkeeping: retries are capped per
+// track, each queued retry is consumed exactly once (with its resume position), a
+// different track starts fresh, and resetRetry drops everything.
+func TestStreamRetry(t *testing.T) {
+	q := &LavalinkQueue{}
+	if _, ok := q.pendingRetry(); ok {
+		t.Fatal("nothing queued yet")
+	}
+	for i := 1; i <= maxStreamRetries; i++ {
+		want := lavalink.Duration(1000 * i)
+		if !q.takeRetry("a", want) {
+			t.Fatalf("retry %d of %d should be allowed", i, maxStreamRetries)
+		}
+		if pos, ok := q.pendingRetry(); !ok || pos != want {
+			t.Fatalf("retry %d: pendingRetry = %v, %v; want %v, true", i, pos, ok, want)
+		}
+		if _, ok := q.pendingRetry(); ok {
+			t.Fatal("a queued retry must be consumed only once")
+		}
+	}
+	if q.takeRetry("a", 0) {
+		t.Fatal("retries past the cap must be refused")
+	}
+	if !q.takeRetry("b", 0) {
+		t.Fatal("a different track starts with fresh retries")
+	}
+	q.resetRetry()
+	if _, ok := q.pendingRetry(); ok {
+		t.Fatal("resetRetry must drop a queued retry")
+	}
+	if !q.takeRetry("b", 0) {
+		t.Fatal("after a reset the same track can retry again")
+	}
+}

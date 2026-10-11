@@ -16,6 +16,17 @@ if [ -z "$(find /tmp/ytdlp-updated -mmin -1440 2>/dev/null)" ]; then
 		</dev/null >/tmp/ytdlp-update.log 2>&1 &
 fi
 
+# Cookies (optional): YouTube refuses streams (403 on every URL) to unauthenticated
+# sessions from a flagged IP. If a Netscape cookies.txt from a THROWAWAY Google
+# account is mounted at /opt/Lavalink/cookies/cookies.txt, hand yt-dlp a private
+# per-call copy: yt-dlp rewrites its cookie jar on exit, and LavaSrc's parallel
+# calls (load + playback) writing one shared file could corrupt it. No file, no-op.
+if [ -f /opt/Lavalink/cookies/cookies.txt ] && jar=$(mktemp); then
+	cp /opt/Lavalink/cookies/cookies.txt "$jar"
+	trap 'rm -f "$jar"' EXIT
+	set -- --cookies "$jar" "$@"
+fi
+
 # stdout carries LavaSrc's JSON, so stderr must stay off it — but keep the last
 # call's warnings/errors in a file instead of discarding them, so a breakage is
 # diagnosable: docker compose exec lavalink cat /tmp/ytdlp-last.err

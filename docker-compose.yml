@@ -49,6 +49,10 @@ services:
       - SPOTIFY_SECRET=${SPOTIFY_SECRET}
     volumes:
       - ./lavalink/application.yml:/opt/Lavalink/application.yml:ro
+      # Optional YouTube cookies from a THROWAWAY Google account, for when YouTube
+      # 403s every stream from this IP: put cookies.txt in lavalink/cookies/
+      # (gitignored). The yt-dlp wrapper uses it automatically when present.
+      - ./lavalink/cookies:/opt/Lavalink/cookies:ro
 
   # Speech-to-text sidecar (faster-whisper, Russian) for voice commands.
   stt:

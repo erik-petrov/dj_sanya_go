@@ -8,9 +8,11 @@
 #  - deno: JS runtime yt-dlp needs to run YouTube's player JS / decipher sigs.
 #  - wrapper (yt-dlp-wrapper.sh -> /usr/local/bin/yt-dlp): self-updates yt-dlp
 #    daily (YouTube breaks a stale one within weeks, and this pip layer is cached
-#    forever otherwise), keeps stderr off LavaSrc's stdout JSON but saves it to
-#    /tmp/ytdlp-last.err, and pipes stdout through ytdlp-fixnull.py to sanitize
-#    null fields that make LavaSrc NPE on playlists.
+#    forever otherwise), passes YouTube cookies from /opt/Lavalink/cookies/
+#    cookies.txt when that's mounted (see docker-compose), keeps stderr off
+#    LavaSrc's stdout JSON but saves it to /tmp/ytdlp-last.err, and pipes stdout
+#    through ytdlp-fixnull.py to sanitize null fields that make LavaSrc NPE on
+#    playlists.
 #    (Debug by calling /opt/ytdlp/bin/yt-dlp directly to see raw output + stderr.)
 #  - /opt/ytdlp is owned by the lavalink user so the runtime self-update can write.
 #

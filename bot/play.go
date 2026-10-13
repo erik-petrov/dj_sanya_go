@@ -258,6 +258,7 @@ func (b *Bot) setupLavalink() {
 		disgolink.WithListenerFunc(b.onTrackEnd),
 		disgolink.WithListenerFunc(b.onTrackException),
 		disgolink.WithListenerFunc(b.onTrackStuck),
+		disgolink.WithListenerFunc(b.onVoiceClosed),
 	)
 
 	password := os.Getenv("LAVALINK_PASSWORD")
@@ -339,6 +340,7 @@ func (b *Bot) onVoiceStateUpdate(s *discordgo.Session, event *discordgo.VoiceSta
 		id := snowflake.MustParse(event.ChannelID)
 		channelID = &id
 	}
+	log.Printf("[voice] own voice state in guild %s: channel=%q", event.GuildID, event.ChannelID)
 	LavalinkClient.OnVoiceStateUpdate(context.TODO(), snowflake.MustParse(event.GuildID), channelID, event.SessionID)
 
 	if event.ChannelID == "" {
@@ -352,7 +354,57 @@ func (b *Bot) onVoiceStateUpdate(s *discordgo.Session, event *discordgo.VoiceSta
 
 // onVoiceServerUpdate forwards Discord voice server updates to Lavalink.
 func (b *Bot) onVoiceServerUpdate(s *discordgo.Session, event *discordgo.VoiceServerUpdate) {
+	log.Printf("[voice] voice server update in guild %s: endpoint=%s", event.GuildID, event.Endpoint)
 	LavalinkClient.OnVoiceServerUpdate(context.TODO(), snowflake.MustParse(event.GuildID), event.Token, event.Endpoint)
+	if ch, ok := voiceHandshakes.LoadAndDelete(event.GuildID); ok {
+		close(ch.(chan struct{}))
+	}
+}
+
+// onVoiceClosed logs Lavalink losing its voice connection to Discord — a silent
+// failure otherwise (no track exception; playback just goes quiet).
+func (b *Bot) onVoiceClosed(player disgolink.Player, event lavalink.WebSocketClosedEvent) {
+	log.Printf("[voice] Lavalink voice connection closed in guild %s: code=%d reason=%q byRemote=%v",
+		event.GuildID(), event.Code, event.Reason, event.ByRemote)
+}
+
+var (
+	// voiceHandshakes holds, per guild, a channel closed when Discord sends the voice
+	// server update for a join warmVoice is waiting on.
+	voiceHandshakes sync.Map // guildID -> chan struct{}
+	// voiceWarmed marks guilds whose voice link warmVoice already cycled since this
+	// process started.
+	voiceWarmed sync.Map // guildID -> bool
+)
+
+// warmVoice cycles the voice link once per guild after the bot starts: join, wait
+// for Discord's voice handshake, leave, so the real join that follows starts clean.
+// Right after a restart the first join otherwise plays silently — no errors — until
+// the user stops and replays (Discord still holds voice state from the previous
+// run); this does that stop-and-replay automatically, once. Must run before the
+// play path creates its player or fills the queue: the leave tears both down.
+// ponytail: costs ~2 s on the first song per server after a restart.
+func (b *Bot) warmVoice(guildID, channelID string) {
+	if _, done := voiceWarmed.LoadOrStore(guildID, true); done {
+		return
+	}
+	if LavalinkClient.ExistingPlayer(snowflake.MustParse(guildID)) != nil {
+		return // already connected through Lavalink in this run — nothing stale
+	}
+	handshake := make(chan struct{})
+	voiceHandshakes.Store(guildID, handshake)
+	if err := b.s.ChannelVoiceJoinManual(guildID, channelID, false, true); err != nil {
+		voiceHandshakes.Delete(guildID)
+		return
+	}
+	select {
+	case <-handshake:
+	case <-time.After(3 * time.Second): // no handshake at all: Discord thought we were already in
+		voiceHandshakes.Delete(guildID)
+	}
+	_ = b.s.ChannelVoiceJoinManual(guildID, "", false, false)
+	time.Sleep(1500 * time.Millisecond) // let the leave land before the real join
+	log.Printf("[voice] cycled the voice link in guild %s (first play since startup)", guildID)
 }
 
 // nowPlayingMsg formats a "now playing" line, appending a masked "Video link"
@@ -845,6 +897,7 @@ func (b *Bot) onPickMenu(s *discordgo.Session, i *discordgo.InteractionCreate, t
 // startOrQueue plays an already-resolved track immediately (joining voice) when
 // nothing is playing, or appends it to the queue otherwise.
 func (b *Bot) startOrQueue(guildID, voiceChannelID string, track lavalink.Track, report func(string)) {
+	b.warmVoice(guildID, voiceChannelID)
 	player := GetOrCreatePlayer(guildID)
 	if player == nil {
 		report("Music is not available right now.")
@@ -1347,6 +1400,7 @@ func (b *Bot) playWithFallback(guildID, voiceChannelID, identifier, displayName,
 // so the slash command (interaction edit) and the voice command (channel
 // message) share this core. Caller must have checked LavalinkClient != nil.
 func (b *Bot) loadAndPlay(guildID, voiceChannelID, identifier, displayName string, report func(string)) (notFound bool) {
+	b.warmVoice(guildID, voiceChannelID)
 	player := GetOrCreatePlayer(guildID)
 	queue := LavalinkQueues.Get(guildID)
 

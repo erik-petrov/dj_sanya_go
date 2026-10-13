@@ -99,3 +99,50 @@ func TestStreamRetry(t *testing.T) {
 		t.Fatal("after a reset the same track can retry again")
 	}
 }
+
+// TestFallbackQuery checks the SoundCloud search built for a track YouTube wouldn't
+// play: bracketed noise goes, an "Artist - Song" title is used as-is, and a bare
+// song title gets the artist/channel prefixed (minus VEVO/Topic noise).
+func TestFallbackQuery(t *testing.T) {
+	cases := []struct{ title, author, want string }{
+		{"Imagine Dragons - Believer (Lyrics)", "SomeLyricsChannel", "Imagine Dragons - Believer"},
+		{"Shadowraze - У Алёны (old)", "wexeven", "Shadowraze - У Алёны"},
+		{"Believer", "ImagineDragonsVEVO", "ImagineDragons Believer"},
+		{"Believer", "Imagine Dragons", "Imagine Dragons Believer"}, // Spotify mirror
+		{"[Official Video] Song 【MV】", "Artist - Topic", "Artist Song"},
+		{"Song", "", "Song"},
+		{"", "", ""},
+	}
+	for _, c := range cases {
+		got := fallbackQuery(lavalink.TrackInfo{Title: c.title, Author: c.author})
+		if got != c.want {
+			t.Errorf("fallbackQuery(%q, %q) = %q, want %q", c.title, c.author, got, c.want)
+		}
+	}
+	for src, want := range map[string]bool{"youtube": true, "spotify": true, "soundcloud": false, "http": false, "local": false} {
+		if canFallback(src) != want {
+			t.Errorf("canFallback(%q) = %v, want %v", src, !want, want)
+		}
+	}
+}
+
+// TestFallbackQueue checks a queued fallback is consumed exactly once, and that a new
+// track starting drops a stale one so it can't fire for the wrong song.
+func TestFallbackQueue(t *testing.T) {
+	q := &LavalinkQueue{}
+	if _, ok := q.takeFallback(); ok {
+		t.Fatal("nothing queued yet")
+	}
+	q.setFallback(trackFallback{query: "a", failMsg: "x"})
+	if fb, ok := q.takeFallback(); !ok || fb.query != "a" || fb.failMsg != "x" {
+		t.Fatalf("takeFallback = %+v, %v", fb, ok)
+	}
+	if _, ok := q.takeFallback(); ok {
+		t.Fatal("a fallback must be consumed only once")
+	}
+	q.setFallback(trackFallback{query: "stale"})
+	q.markStarted()
+	if _, ok := q.takeFallback(); ok {
+		t.Fatal("a new track starting must drop a stale fallback")
+	}
+}

@@ -83,6 +83,33 @@ type LavalinkQueue struct {
 	retries      int               // retries used for retryID
 	retryPos     lavalink.Duration // where to resume
 	retryPending bool              // a retry is queued for onTrackEnd to perform
+
+	fallback *trackFallback // SoundCloud search queued for a track YouTube won't play
+}
+
+// trackFallback is a SoundCloud search queued for a track YouTube wouldn't play.
+type trackFallback struct {
+	query   string // SoundCloud search for the same song
+	failMsg string // the error to show if SoundCloud has nothing either
+}
+
+// setFallback queues a SoundCloud fallback for onTrackEnd to perform.
+func (q *LavalinkQueue) setFallback(fb trackFallback) {
+	q.mu.Lock()
+	q.fallback = &fb
+	q.mu.Unlock()
+}
+
+// takeFallback consumes the queued fallback, if any.
+func (q *LavalinkQueue) takeFallback() (trackFallback, bool) {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	if q.fallback == nil {
+		return trackFallback{}, false
+	}
+	fb := *q.fallback
+	q.fallback = nil
+	return fb, true
 }
 
 // takeRetry queues a resume-from-pos retry for the given track and reports whether
@@ -133,9 +160,12 @@ func (q *LavalinkQueue) noteResult(succeeded bool) int {
 }
 
 // markStarted records that the current track just began playing (from TrackStart).
+// It also drops any fallback still queued for an earlier track (e.g. one stopped
+// mid-failure), so it can't fire for the wrong song.
 func (q *LavalinkQueue) markStarted() {
 	q.mu.Lock()
 	q.startedAt = time.Now()
+	q.fallback = nil
 	q.mu.Unlock()
 }
 
@@ -898,13 +928,11 @@ const maxConsecutiveFails = 3
 const minPlayForSuccess = 3 * time.Second
 
 // maxStreamRetries caps quiet retries of a track whose stream URL got a 403. YouTube
-// currently rejects a random ~2/3 of fresh stream URLs (independent of client, cache,
-// PO token and cookies; a rejected URL stays rejected), and LavaSrc re-extracts a new
-// URL on every play, so a few retries get most tracks playing: at ~1/3 per attempt,
-// 6 attempts succeed ~91% of the time. Each retry restarts the track, so Lavalink's
-// stuck timer never fires mid-retry.
-// ponytail: retry-and-hope while YouTube is flaky; each retry costs ~2-4s of silence.
-const maxStreamRetries = 5
+// rejects a random share of fresh stream URLs (a rejected URL stays rejected), and the
+// source re-extracts a new URL on every play, so a retry can succeed. Kept small: once
+// they're used up the track falls back to SoundCloud, which beats 20 s of silence.
+// Each retry restarts the track, so Lavalink's stuck timer never fires mid-retry.
+const maxStreamRetries = 2
 
 // onTrackStart timestamps the current track so onTrackEnd can tell a real load
 // failure (dies immediately) from a track that played through and only faulted at
@@ -934,6 +962,7 @@ func (b *Bot) onTrackEnd(player disgolink.Player, event lavalink.TrackEndEvent) 
 		}
 		log.Println("failed to retry track:", err)
 	}
+	fallback, haveFallback := queue.takeFallback()
 	queue.resetRetry()
 
 	// Treat "played for a while then faulted at the end" as a success, so repeat
@@ -944,6 +973,16 @@ func (b *Bot) onTrackEnd(player disgolink.Player, event lavalink.TrackEndEvent) 
 	// Skip failed tracks, but give up after too many in a row.
 	if fails := queue.noteResult(succeeded); !succeeded && fails > maxConsecutiveFails {
 		log.Printf("onTrackEnd: %d consecutive failures in guild %s — not advancing", fails, guildID)
+		if haveFallback {
+			b.announce(guildID, fallback.failMsg) // onTrackException held it back for the fallback
+		}
+		return
+	}
+
+	// YouTube wouldn't play it: look for the same song on SoundCloud instead of
+	// skipping. Off this goroutine, since it does a search.
+	if !succeeded && haveFallback {
+		go b.playFallback(player, guildID, fallback)
 		return
 	}
 
@@ -998,9 +1037,93 @@ func (b *Bot) onTrackException(player disgolink.Player, event lavalink.TrackExce
 	if queue.playedAtLeast(minPlayForSuccess) {
 		return
 	}
-	if chID := b.announceChannelFor(guildID); chID != "" {
-		_, _ = b.s.ChannelMessageSend(chID, describeTrackException(event.Track, event.Exception))
+	msg := describeTrackException(event.Track, event.Exception)
+	// Don't drop the song: queue a SoundCloud search for it, which onTrackEnd runs.
+	// playFallback reports to the channel, so stay quiet here.
+	if canFallback(event.Track.Info.SourceName) {
+		if q := fallbackQuery(event.Track.Info); q != "" {
+			queue.setFallback(trackFallback{query: q, failMsg: msg})
+			return
+		}
 	}
+	b.announce(guildID, msg)
+}
+
+// announce posts a status message to the guild's music/announce channel, if any.
+func (b *Bot) announce(guildID, msg string) {
+	if chID := b.announceChannelFor(guildID); chID != "" {
+		_, _ = b.s.ChannelMessageSend(chID, msg)
+	}
+}
+
+// canFallback reports whether a failed track is worth looking for on SoundCloud:
+// not one that's already from SoundCloud, and not an uploaded file (its "title" is
+// just a filename).
+func canFallback(source string) bool {
+	return source != "soundcloud" && source != "http" && source != "local"
+}
+
+var (
+	// bracketsRe strips "(Lyrics)", "[Official Video]", "【MV】" and the like.
+	bracketsRe = regexp.MustCompile(`\s*[(\[{【][^)\]}】]*[)\]}】]`)
+	// channelNoiseRe strips YouTube channel suffixes that aren't part of the artist.
+	channelNoiseRe = regexp.MustCompile(`(?i)\s*(vevo|- topic|official)$`)
+)
+
+// fallbackQuery builds a SoundCloud search for the same song. YouTube titles usually
+// name the artist already ("Artist - Song (Lyrics)"), so strip the bracketed noise and
+// search the title; otherwise prefix the artist (Spotify mirrors) or channel name.
+func fallbackQuery(info lavalink.TrackInfo) string {
+	title := strings.TrimSpace(bracketsRe.ReplaceAllString(info.Title, ""))
+	if title == "" {
+		title = strings.TrimSpace(info.Title)
+	}
+	if title == "" || strings.Contains(title, " - ") {
+		return title
+	}
+	if author := strings.TrimSpace(channelNoiseRe.ReplaceAllString(info.Author, "")); author != "" {
+		return author + " " + title
+	}
+	return title
+}
+
+// playFallback plays the first SoundCloud hit for a song YouTube wouldn't stream, so
+// music keeps going while YouTube refuses this server. If SoundCloud has nothing
+// either, it reports the original error and moves on to the next queued track.
+func (b *Bot) playFallback(player disgolink.Player, guildID string, fb trackFallback) {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	var hit *lavalink.Track
+	first := func(ts []lavalink.Track) {
+		if len(ts) > 0 {
+			hit = &ts[0]
+		}
+	}
+	LavalinkClient.BestNode().LoadTracksHandler(ctx, lavalink.SearchTypeSoundCloud.Apply(fb.query), disgolink.NewResultHandler(
+		func(t lavalink.Track) { hit = &t },
+		func(p lavalink.Playlist) { first(p.Tracks) },
+		first,
+		func() {},
+		func(err error) { log.Println("soundcloud fallback search:", err) },
+	))
+
+	// The user stopped, skipped or started something else while we searched.
+	if player.ChannelID() == nil || player.Track() != nil {
+		return
+	}
+	if hit == nil {
+		b.announce(guildID, fb.failMsg+"\nНа SoundCloud тоже не нашёл — пропускаю.")
+		b.playNext(player, guildID)
+		return
+	}
+	if err := player.Update(context.TODO(), lavalink.WithTrack(*hit)); err != nil {
+		log.Println("soundcloud fallback play:", err)
+		b.playNext(player, guildID)
+		return
+	}
+	log.Printf("soundcloud fallback in guild %s: %q -> %q", guildID, fb.query, hit.Info.Title)
+	b.announce(guildID, "⚠️ YouTube не отдал трек — играю версию с SoundCloud.")
+	b.sendNowPlaying(guildID, *hit)
 }
 
 // describeTrackException turns a Lavalink playback exception into a clear,

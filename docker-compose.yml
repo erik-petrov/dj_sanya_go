@@ -9,9 +9,8 @@
 # poTokens, bot -> http://stt:8000); nothing is exposed to the host.
 
 services:
-  # Remote cipher server for the youtube-source plugin. NOTE: now unused —
-  # YouTube goes through yt-dlp (LavaSrc), not youtube-source. Kept only so the
-  # rollback path (re-enable youtube-source) works without editing compose.
+  # Remote cipher server for the youtube-source plugin: deciphers YouTube's stream
+  # signatures, since youtube-source's built-in cipher is broken (youtube-source#241).
   yt-cipher:
     image: ghcr.io/kikkia/yt-cipher:master
     container_name: yt-cipher
@@ -41,7 +40,8 @@ services:
     container_name: lavalink
     restart: unless-stopped
     depends_on:
-      - bgutil # yt-dlp pulls poTokens from the bgutil provider
+      - yt-cipher # youtube-source deciphers stream URLs through it
+      - bgutil # yt-dlp (the rollback YouTube path) pulls poTokens from it
     environment:
       - _JAVA_OPTIONS=-Xmx1G # cap heap; raise if you see OOM
       # LavaSrc reads these for Spotify (interpolated from the repo-root .env).

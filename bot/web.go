@@ -16,7 +16,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/disgoorg/disgolink/v3/disgolink"
 	"github.com/disgoorg/disgolink/v3/lavalink"
 	"github.com/disgoorg/snowflake/v2"
 )
@@ -323,21 +322,9 @@ func (b *Bot) apiSearch(w http.ResponseWriter, r *http.Request, sess *webSession
 		writeJSON(w, []any{})
 		return
 	}
-	node := LavalinkClient.BestNode()
-	if node == nil {
-		writeJSON(w, []any{})
-		return
-	}
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	var results []lavalink.Track
-	node.LoadTracksHandler(ctx, lavalink.SearchTypeYouTube.Apply(q), disgolink.NewResultHandler(
-		func(t lavalink.Track) { results = []lavalink.Track{t} },
-		func(pl lavalink.Playlist) { results = pl.Tracks },
-		func(ts []lavalink.Track) { results = ts },
-		func() {},
-		func(error) {},
-	))
+	results, _ := searchTracks(ctx, q)
 	if len(results) > 10 {
 		results = results[:10]
 	}

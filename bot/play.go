@@ -34,8 +34,8 @@ var announceChannels sync.Map
 var (
 	// urlPattern matches anything that already looks like a URL.
 	urlPattern = regexp.MustCompile(`^https?://[-a-zA-Z0-9+&@#/%?=~_|!:,.;]*[-a-zA-Z0-9+&@#/%=~_|]?`)
-	// searchPattern matches Lavalink search prefixes such as "ytsearch:" or "scsearch:".
-	searchPattern = regexp.MustCompile(`^(.{2})search:(.+)`)
+	// searchPattern matches Lavalink search prefixes such as "ytsearch:", "ytmsearch:" or "scsearch:".
+	searchPattern = regexp.MustCompile(`^([a-z]{2,4})search:(.+)`)
 )
 
 // respond replies to a slash-command interaction with a plain text message.
@@ -798,17 +798,9 @@ func (b *Bot) deepSearch(s *discordgo.Session, i *discordgo.InteractionCreate, g
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
-	var results []lavalink.Track
-	loadErr := ""
-	LavalinkClient.BestNode().LoadTracksHandler(ctx, lavalink.SearchTypeYouTube.Apply(query), disgolink.NewResultHandler(
-		func(track lavalink.Track) { results = []lavalink.Track{track} },
-		func(playlist lavalink.Playlist) { results = playlist.Tracks },
-		func(tracks []lavalink.Track) { results = tracks },
-		func() {},
-		func(err error) { loadErr = err.Error() },
-	))
-	if loadErr != "" {
-		editInteraction(s, i, "Error while looking up query: `"+loadErr+"`")
+	results, err := searchTracks(ctx, query)
+	if err != nil {
+		editInteraction(s, i, "Error while looking up query: `"+err.Error()+"`")
 		return
 	}
 	if len(results) == 0 {
@@ -1380,7 +1372,17 @@ func (b *Bot) onPlay(s *discordgo.Session, i *discordgo.InteractionCreate) {
 // nothing, retries once with the query transliterated to Latin — spoken English
 // titles come out of the Russian STT as Cyrillic phonetics.
 func (b *Bot) playWithFallback(guildID, voiceChannelID, identifier, displayName, rawQuery string, report func(string)) {
-	if !b.loadAndPlay(guildID, voiceChannelID, identifier, displayName, report) {
+	play := func(id string) (notFound bool) {
+		return b.loadAndPlay(guildID, voiceChannelID, id, displayName, report)
+	}
+	if !play(identifier) {
+		return
+	}
+	// A free-text search YouTube Music had nothing for: plain YouTube also has
+	// non-music videos. Keyed on the identifier, not rawQuery, which also holds
+	// typed URLs (a dead link mustn't turn into a search for the URL text).
+	if strings.HasPrefix(identifier, string(lavalink.SearchTypeYouTubeMusic)+":") &&
+		!play(lavalink.SearchTypeYouTube.Apply(rawQuery+searchSuffix)) {
 		return
 	}
 	if rawQuery == "" || !hasCyrillic(rawQuery) {
@@ -1388,11 +1390,10 @@ func (b *Bot) playWithFallback(guildID, voiceChannelID, identifier, displayName,
 	}
 	latin := anglicize(rawQuery)
 	report("🔎 Пробую латиницей: `" + latin + "`")
-	id, err := queryToIdentifier(latin)
-	if err != nil {
+	if !play(lavalink.SearchTypeYouTubeMusic.Apply(latin)) {
 		return
 	}
-	b.loadAndPlay(guildID, voiceChannelID, id, displayName, report)
+	play(lavalink.SearchTypeYouTube.Apply(latin + searchSuffix))
 }
 
 // loadAndPlay resolves an identifier on the Lavalink node and either starts it
@@ -1536,25 +1537,46 @@ func (b *Bot) resolveIdentifier(s *discordgo.Session, i *discordgo.InteractionCr
 	}
 }
 
-// searchSuffix is appended to free-text searches to bias YouTube toward the
-// actual track (a lyrics / official-audio upload) over covers, live takes,
-// reactions, etc.
+// searchSuffix is appended to plain-YouTube fallback searches to bias them toward
+// the actual track (a lyrics / official-audio upload) over covers, live takes,
+// reactions, etc. YouTube Music searches don't need it — they return the song.
 const searchSuffix = " lyrics"
 
 // queryToIdentifier turns a raw query (typed or spoken) into a Lavalink
 // identifier: URLs (YouTube, Spotify, SoundCloud, Deezer, ...) and explicit
 // "xxsearch:" prefixes pass straight through — Lavalink resolves them via the
 // youtube / LavaSrc / native SoundCloud sources — while plain text becomes a
-// YouTube search.
+// YouTube Music search: it returns the actual song, and it's the YouTube search
+// that works on this server's IP (plain ytsearch comes back empty).
+// playWithFallback retries plain YouTube when YouTube Music has nothing.
 func queryToIdentifier(query string) (string, error) {
 	if urlPattern.MatchString(query) || searchPattern.MatchString(query) {
 		return query, nil
 	}
-	// Cyrillic queries get the Russian-flavoured suffix; pure-Latin ones (typed
-	// English, or an anglicized retry) get a plain " lyrics".
-	suffix := searchSuffix
-	if !hasCyrillic(query) {
-		suffix = " lyrics"
+	return lavalink.SearchTypeYouTubeMusic.Apply(query), nil
+}
+
+// searchTracks searches YouTube Music, then plain YouTube for anything YT Music
+// doesn't carry (non-music videos). Shared by the deep-search picker and the web
+// panel; the error is only returned if no search found anything.
+func searchTracks(ctx context.Context, query string) ([]lavalink.Track, error) {
+	node := LavalinkClient.BestNode()
+	if node == nil {
+		return nil, errors.New("no Lavalink node available")
 	}
-	return lavalink.SearchTypeYouTube.Apply(query + suffix), nil
+	var lastErr error
+	for _, st := range []lavalink.SearchType{lavalink.SearchTypeYouTubeMusic, lavalink.SearchTypeYouTube} {
+		var results []lavalink.Track
+		node.LoadTracksHandler(ctx, st.Apply(query), disgolink.NewResultHandler(
+			func(t lavalink.Track) { results = []lavalink.Track{t} },
+			func(p lavalink.Playlist) { results = p.Tracks },
+			func(ts []lavalink.Track) { results = ts },
+			func() {},
+			func(err error) { lastErr = err },
+		))
+		if len(results) > 0 {
+			return results, nil
+		}
+	}
+	return nil, lastErr
 }

@@ -146,3 +146,19 @@ func TestFallbackQueue(t *testing.T) {
 		t.Fatal("a new track starting must drop a stale fallback")
 	}
 }
+
+// TestQueryToIdentifier checks free text becomes a YouTube Music search while URLs
+// and explicit search prefixes (including the 3-letter ytmsearch) pass through.
+func TestQueryToIdentifier(t *testing.T) {
+	cases := map[string]string{
+		"imagine dragons believer":                    "ytmsearch:imagine dragons believer",
+		"https://www.youtube.com/watch?v=Kx7B-XvmFtE": "https://www.youtube.com/watch?v=Kx7B-XvmFtE",
+		"scsearch:believer":                           "scsearch:believer",
+		"ytmsearch:believer":                          "ytmsearch:believer",
+	}
+	for in, want := range cases {
+		if got, _ := queryToIdentifier(in); got != want {
+			t.Errorf("queryToIdentifier(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
